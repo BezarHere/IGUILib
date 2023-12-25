@@ -71,9 +71,11 @@ namespace igui
 
 	};
 
-	class Context
+	class Interface
 	{
 	public:
+
+
 
 	private:
 		vector<Node> m_nodes;
@@ -96,6 +98,11 @@ namespace igui
 		i64      m_state;
 		i32			 m_flags;
 		string   m_text;
+		Rectf    m_anchors = { 0.f, 0.f, 1.f, 1.f };
+
+		struct {
+			i16 h, v;
+		} m_size_flags;
 
 		vector<index_t> m_children;
 		index_t         m_parent = InvalidIndex;
