@@ -1,0 +1,14 @@
+# project path, or '..' to make it the current dir the file resides in
+project ".."
+
+define:output F:\assets\CppLibs\IGUILib
+
+source "__proj__\igui-lib\src"
+
+output "__output__"
+
+blacklist pch.h
+blacklist internal.h
+
+move "__proj__\x64\Debug\igui-lib.lib" "__output__\lib\igui_x64-d.lib" /s /overwrite
+move "__proj__\x64\Release\igui-lib.lib" "__output__\lib\igui_x64.lib" /s /overwrite

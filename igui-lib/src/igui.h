@@ -11,7 +11,12 @@
 // ROADMAP:
 //   Add more extensibility to drawing
 
+
+#define IGUI_IGLIB 1 // <- iglib implementation
+
 #include <iglib.h>
+
+#define IGUI_IMPL IGUI_IGLIB
 
 namespace igui
 {
@@ -27,7 +32,8 @@ namespace igui
 	typedef int64_t i64;
 
 	typedef size_t index_t;
-	constexpr index_t InvalidIndex = (index_t)-1;
+	constexpr index_t npos = (index_t)-1;
+	constexpr index_t InvalidIndex = npos;
 
 	
 	using Trnsf = ig::Transform2D;
@@ -50,13 +56,35 @@ namespace igui
 	class NodeFactory;
 	class Context;
 
-	enum class NodeType : u8
+	enum class NodeType : u16
 	{
 		None = 0,
+		ReferenceBox, // <- unfilled box
+		Panel,
+
+		// buttons
 		Button,
 		RadialButton,
-		Label,
+		Checkbox, // [X] or [_]
+		CheckButton, // [1--] or [--O]
+		DropdownMenu, // <- dropdown button, labels and sliders
+		DropdownOption, // <- dropdown selection
 
+		// ranges
+		HSlider,
+		VSlider,
+		HProgressBar,
+		VProgressBar,
+		HScrollbar,
+		VScrollbar,
+
+		Sprite,
+		Line,
+		SolidColor,
+		Label,
+		TextInput,
+		VSeprator,
+		HSeprator
 	};
 
 	enum StateMask : i64
@@ -108,7 +136,14 @@ namespace igui
 	class Interface
 	{
 	public:
+		struct DrawingStateCache;
+
 		using this_type = Interface;
+		using nodes_collection = vector<Node>;
+		using nodes_indices = vector<index_t>;
+
+		Interface();
+		~Interface();
 
 		void update();
 		void draw(const Window *window, Renderer *renderer) const;
@@ -135,14 +170,27 @@ namespace igui
 			return m_nodes[ i ];
 		}
 
-		inline const vector<Node> &get_nodes() const {
+		inline const nodes_collection &get_nodes() const {
 			return m_nodes;
 		}
 
+		DrawingStateCache *get_drawing_sc();
+		const DrawingStateCache *get_drawing_sc() const;
+
 	private:
-		vector<Node> m_nodes;
-		vector<index_t> m_roots;
+		// internal structure
+		struct SPDrawingStateCache
+		{
+			// FOR USERS: Changing this value from 4096 will CORRUPT the STACK
+			static constexpr size_t AllocationSize = 4096;
+			std::array<i32, AllocationSize / 4> memory = {};
+		};
+
+		nodes_collection m_nodes;
+		nodes_indices m_roots;
 		Style m_style;
+		mutable SPDrawingStateCache m_sp_drawing_sc;
+		mutable DrawingStateCache *m_drawing_sc;
 	};
 
 	class Node
@@ -163,11 +211,30 @@ namespace igui
 			return m_state;
 		}
 
+		void set_position( Vec2f pos );
+		void set_size( Vec2f size );
+		void set_rect( Vec2f pos, Vec2f size );
+		void set_rect( Rectf rect );
+
+		inline Vec2f get_position() const noexcept {
+			return { m_rect.x, m_rect.y };
+		}
+
+		inline Vec2f get_size() const noexcept {
+			return { m_rect.h, m_rect.w };
+		}
+
+		inline const Rectf &get_rect() const noexcept {
+			return m_rect;
+		}
+
 	private:
 		NodeType m_type;
 		i64 m_state        = StateMask_Enabled;
 		i32 m_flags        = 0;
-		Rectf m_rect       = { 0.f, 0.f, 32.f, 32.f };
+		Rectf m_old_rect   = { 0.f, 0.f, 32.f, 32.f };
+		Rectf m_rect       = { 0.f, 0.f, 32.f, 32.f }; // <- relative rect to it's parent
+		bool m_rect_dirty  = false;
 		Rectf m_anchors    = { 0.f, 0.f, 1.f, 1.f };
 		Vec2f m_pivot      = { 0.f, 0.f };
 		float m_angle      = 0.0f;
