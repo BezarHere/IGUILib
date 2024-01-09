@@ -9,24 +9,24 @@
 #pragma comment(lib, "igui_x64")
 #endif // _DEBUG
 
+using igui::index_t;
+using igui::Node;
+using igui::Interface;
 
 static void drawer( ig::Renderer &r );
 
-igui::Interface *g_interface;
+Interface *g_interface;
 int main() {
 	ig::Window wind{ {512, 512}, "hello" };
 	ig::Renderer rend{ wind, drawer };
-	igui::Interface interface{};
+	Interface interface{};
 	g_interface = &interface;
 
-	igui::Node n{ igui::NodeType::Button };
-	n.set_rect( { 32.f, 32.f, 64.f, 64.f } );
-
-	igui::index_t t = interface.add_node(n);
-
-	for (int i = 0; i < 1000; i++)
 	{
-		t = interface.add_node( igui::Node( n ), t );
+		Node n{ igui::NodeType::Button };
+		n.set_rect( { 32.f, 32.f, 64.f, 64.f } );
+
+		index_t t = interface.add_node( n );
 	}
 
 	while (!wind.should_close())

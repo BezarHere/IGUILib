@@ -203,13 +203,13 @@ namespace igui
 		}
 
 		inline void draw_box() const {
-			m_renderer->get_canvas().draw( box_vertices.get_buffer(), index_buffers.box);
+			m_renderer->get_canvas().draw( box_vertices.get_buffer(), index_buffers.box );
 		}
 
 		inline void draw_frame() const {
-			m_renderer->get_canvas().draw( frame_vertices.get_buffer(), index_buffers.frame);
+			m_renderer->get_canvas().draw( frame_vertices.get_buffer(), index_buffers.frame );
 		}
-		
+
 		Vertex2Array<4> box_vertices{ ig::PrimitiveType::Triangle, 4, ig::BufferUsage::Stream }; // quad
 		Vertex2Array<10> frame_vertices{ ig::PrimitiveType::Triangle, 4 * 2 + 2, ig::BufferUsage::Stream }; // quad strip
 		const struct {
@@ -232,11 +232,11 @@ namespace igui
 
 
 	Node::Node()
-		: m_type{ NodeType::None } {
+		: m_type{ NodeType::None }, m_index{ npos } {
 	}
 
 	Node::Node( NodeType type )
-		: m_type{ type } {
+		: m_type{ type }, m_index{ npos } {
 	}
 
 	Interface::Interface()
@@ -300,14 +300,16 @@ namespace igui
 		}
 
 		m_drawing_sc->start( renderer );
-		
+
 		NodeTree tree{ m_roots, m_nodes };
 
 
 		for (index_t i = 0; tree; i = tree.next_node())
 		{
 			const Node &node = m_nodes[ i ];
-			const ParentNodeConnection *con = std::invoke( []( const ParentNodeConnection *c ) { return c ? c : &DefaultPNC; }, tree.get_connection() );
+			const ParentNodeConnection *con = ([]( const ParentNodeConnection *c ) { return c ? c : &DefaultPNC; })(tree.get_connection());
+			const Vec2f node_global_pos = { con->position.x + node.m_rect.x, con->position.y + node.m_rect.y };
+			const Rectf node_global_rect = { node_global_pos.x, node_global_pos.y, node.m_rect.w, node.m_rect.h };
 
 			// drawing the node
 			switch (node.m_type)
@@ -318,7 +320,7 @@ namespace igui
 						m_style.panel.background.value_or( m_style.base.background.value() )
 					);
 
-					m_drawing_sc->gen_box( node.m_rect.x + con->position.x, node.m_rect.y + con->position.y, node.m_rect.w, node.m_rect.h );
+					m_drawing_sc->gen_box( node_global_pos.x, node_global_pos.y, node_global_rect.w, node_global_rect.h );
 					m_drawing_sc->draw_box();
 
 					const auto boarder = m_style.panel.boarder.value_or( m_style.base.boarder.value() );
@@ -326,11 +328,11 @@ namespace igui
 					{
 						m_drawing_sc->apply_style_element( boarder.style.value() );
 
-						m_drawing_sc->gen_frame( { node.m_rect.x - boarder.left,
-																			 node.m_rect.y - boarder.top,
-																			 node.m_rect.w + boarder.left + boarder.right,
-																			 node.m_rect.h + boarder.top + boarder.bottom  },
-																		 node.m_rect );
+						m_drawing_sc->gen_frame( { node_global_pos.x - boarder.left,
+																			 node_global_pos.y - boarder.top,
+																			 node_global_rect.w + boarder.left + boarder.right,
+																			 node_global_rect.h + boarder.top + boarder.bottom },
+																		 node_global_rect );
 						m_drawing_sc->draw_frame();
 					}
 				}
@@ -341,7 +343,7 @@ namespace igui
 						m_style.button.background.value_or( m_style.base.background.value() )
 					);
 
-					m_drawing_sc->gen_box( node.m_rect.x + con->position.x, node.m_rect.y + con->position.y, node.m_rect.w, node.m_rect.h );
+					m_drawing_sc->gen_box( node_global_pos.x, node_global_pos.y, node_global_rect.w, node_global_rect.h );
 					m_drawing_sc->draw_box();
 
 					const auto boarder = m_style.panel.boarder.value_or( m_style.base.boarder.value() );
@@ -349,11 +351,11 @@ namespace igui
 					{
 						m_drawing_sc->apply_style_element( boarder.style.value() );
 
-						m_drawing_sc->gen_frame( { node.m_rect.x - boarder.left,
-																			 node.m_rect.y - boarder.top,
-																			 node.m_rect.w + boarder.left + boarder.right,
-																			 node.m_rect.h + boarder.top + boarder.bottom },
-																		 node.m_rect );
+						m_drawing_sc->gen_frame( { node_global_pos.x - boarder.left,
+																			 node_global_pos.y - boarder.top,
+																			 node_global_rect.w + boarder.left + boarder.right,
+																			 node_global_rect.h + boarder.top + boarder.bottom },
+																		 node_global_rect );
 						m_drawing_sc->draw_frame();
 					}
 
@@ -370,27 +372,79 @@ namespace igui
 	}
 
 	index_t Interface::add_node( const Node &node, index_t parent ) {
+		// use add_branch() for this case, not add_node()
 		if (node.m_parent != InvalidIndex || !node.m_children.empty())
 			return InvalidIndex;
 
-		const size_t ln = m_nodes.size();
+		const size_t node_index = m_nodes.size();
 		m_nodes.push_back( node );
 
 		if (parent == InvalidIndex)
 		{
-			m_roots.push_back( ln );
+			m_roots.push_back( node_index );
 		}
 		else
 		{
-			m_nodes[ parent ].m_children.push_back( ln );
-			m_nodes[ ln ].m_parent = parent;
+			m_nodes[ parent ].m_children.push_back( node_index );
+			m_nodes[ node_index ].m_parent = parent;
 		}
 
-		return ln;
+		m_nodes[ node_index ].m_index = node_index;
+		return node_index;
 	}
 
 	index_t Interface::transfer_branch( const this_type &old, index_t node_index, index_t parent ) {
 		return InvalidIndex;
+	}
+
+	void Interface::validate() {
+		const size_t nodes_count = m_nodes.size();
+
+		// checking nodes
+		for (index_t node_index = 0; node_index < nodes_count; node_index++)
+		{
+			if (m_nodes[ node_index ].m_index != node_index)
+			{
+				//! something fucked up happened
+			}
+
+			if (m_nodes[ node_index ].m_parent != npos && m_nodes[ node_index ].m_parent >= nodes_count)
+			{
+				//! invalid index for parent
+			}
+
+			// checking children
+			for (const index_t child_index : m_nodes[ node_index ].m_children)
+			{
+				if (child_index >= nodes_count)
+				{
+					//! invalid child index
+				}
+
+				if (m_nodes[ child_index ].m_parent != node_index)
+				{
+					//! child thinks he is an orphan/root
+				}
+
+			}
+
+		}
+
+		// checking root nodes with extra steps
+		for (const index_t root_node_index : m_roots)
+		{
+			if (root_node_index >= nodes_count)
+			{
+				//! invalid index
+			}
+
+			if (m_nodes[ root_node_index ].m_parent != npos)
+			{
+				//! how is it a root with a parent?
+			}
+
+		}
+
 	}
 
 	DrawingStateCache *Interface::get_drawing_sc() {

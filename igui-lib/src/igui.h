@@ -270,6 +270,9 @@ namespace igui
 		DrawingStateCache *get_drawing_sc();
 		const DrawingStateCache *get_drawing_sc() const;
 
+		/// @brief checking if anything is not 'normal'
+		void validate();
+
 	private:
 		class NodeTree;
 		// internal structure
@@ -322,8 +325,14 @@ namespace igui
 			return m_rect;
 		}
 
+		inline index_t index() const noexcept {
+			return m_index;
+		}
+
 	private:
 		NodeType m_type;
+		index_t m_index;
+
 		i64 m_state = StateMask_Enabled;
 		i32 m_flags = 0;
 		Rectf m_old_rect = { 0.f, 0.f, 32.f, 32.f };
@@ -339,8 +348,8 @@ namespace igui
 		string m_text = "Sample text";
 		string m_tooltip = "Sample tooltip"; // <- empty tooltip will not be displayed
 
-		i16 m_text_align;
-		i16 m_tooltip_state;
+		i16 m_text_align = 0;
+		i16 m_tooltip_state = 0;
 
 		struct {
 			SizeFlags horizontal = SizeFlags_None;
