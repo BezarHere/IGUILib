@@ -10,5 +10,5 @@ output "__output__"
 blacklist pch.h
 blacklist internal.h
 
-move "__proj__\x64\Debug\igui-lib.lib" "__output__\lib\igui_x64-d.lib" /s /overwrite
-move "__proj__\x64\Release\igui-lib.lib" "__output__\lib\igui_x64.lib" /s /overwrite
+move "__proj__\x64\Debug\igui-lib.lib" "__output__\lib\igui_x64-d.lib" /o /s
+move "__proj__\x64\Release\igui-lib.lib" "__output__\lib\igui_x64.lib" /o /s

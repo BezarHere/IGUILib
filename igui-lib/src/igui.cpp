@@ -16,42 +16,218 @@ inline _T _prereserved( const size_t capacity ) {
 	return p;
 }
 
-constexpr i32 NodeTSIZE = sizeof( Node ) * 16;
-constexpr i32 InterfaceTSIZE = sizeof( Interface );
-static Interface::nodes_indices g_ForProcessing = _prereserved<Interface::nodes_indices>(4096); // <- a std::stack is limiting
+constexpr size_t NodeTSIZE = sizeof( Node );
+constexpr size_t InterfaceTSIZE = sizeof( Interface );
+static_assert(NodeTSIZE < 256, "A node should be smaller then 256B, but it's NOT, fix");
+static_assert(InterfaceTSIZE < 8192, "What are you doing? an interface should be smaller then 8KB");
 
-static inline Rectf anchored_rect_dt( const Vec2f &size_dt, const Rectf &anchors ) {
-	return { anchors.x * size_dt.x, anchors.y * size_dt.y, anchors.w * size_dt.x, anchors.h * size_dt.y };
-}
-
-class NodeTreeIterator;
-class NodeTree
+class Interface::NodeTree
 {
-	friend NodeTreeIterator;
 public:
+	struct ParentNodeConnection
+	{
+		index_t next_node;
+		Vec2f position; // <- global position
+		Color modulate;
+	};
 
+	inline NodeTree( const Interface::nodes_indices &roots, const Interface::nodes_collection &nodes )
+		: m_nodes{ roots }, m_nodes_ref{ nodes }, m_connections{} {
+	}
+
+	// might be wrong
 	inline size_t get_depth() const noexcept {
-		return m_depth.size();
+		return m_connections.size();
+	}
+
+	inline operator bool() const noexcept {
+		return !m_nodes.empty();
+	}
+
+	inline const ParentNodeConnection *get_connection() const {
+		if (m_connections.empty())
+			return nullptr;
+
+		return &m_connections.back();
+	}
+
+	inline index_t next_node() {
+		// this function must not be called with no nodes
+
+		const index_t node_index = m_nodes.back();
+		m_nodes.pop_back();
+		const Node &node = m_nodes_ref[ node_index ];
+
+		const index_t next_node_index = m_nodes.empty() ? npos : m_nodes.back();
+
+		if (!node.m_children.empty())
+		{
+			// adding two connections with the same next_node will create all sorts of bugs
+			if (!m_connections.empty() && m_connections.back().next_node == next_node_index)
+			{
+				// update the last connection
+				m_connections.back().position.x += node.m_rect.x;
+				m_connections.back().position.y += node.m_rect.y;
+				// TODO: modulate
+			}
+			else
+			{
+				// add a new connection
+				m_connections.emplace_back( next_node_index,
+																		Vec2f( node.m_rect.x, node.m_rect.y ),
+																		Color( 1.f, 1.f, 1.f, 1.f ) );
+			}
+
+
+			for (index_t k : node.m_children)
+			{
+				m_nodes.push_back( k );
+			}
+		}
+		// no children to add means that the next node is exposed
+		// check if the ParentNodeConnection is bound to it
+		else if (!m_connections.empty() && next_node_index != npos)
+		{
+			pop_pncs();
+		}
+
+		return node_index;
 	}
 
 private:
+	inline void pop_pncs() {
+		if (m_connections.back().next_node == m_nodes.back())
+			m_connections.pop_back();
+	}
+
+private:
+	typename const Interface::nodes_collection &m_nodes_ref;
 	Interface::nodes_indices m_nodes;
-	Interface::nodes_indices m_depth;
-};
-
-class NodeTreeIterator
-{
-
+	vector<ParentNodeConnection> m_connections;
 };
 
 namespace igui
 {
+	using IndexBuffer = ig::Index8Buffer;
+
+
 	struct Interface::DrawingStateCache
 	{
-#if IGUI_IMPL == IGUI_IGLIB
-		Vertex2Array<4> box_vertices{ ig::PrimitiveType::Quad, 4, ig::BufferUsage::Dynamic };
-		Vertex2Array<16> ref_box_vertices{ ig::PrimitiveType::Quad, 4 * 4, ig::BufferUsage::Dynamic }; // 1 qaud for each side
-#endif // IGUI_IMPL == IGUI_IGLIB
+		DrawingStateCache() {
+			constexpr ig::Vertex2 BaseVertex2 = { ig::Vector2f(), ig::ColorfTable::White, ig::Vector2f() };
+			constexpr std::array<ig::Vector2f, 4> BoxDirTable = { ig::Vector2f( 0.f, 0.f ), ig::Vector2f( 1.f, 0.f ), ig::Vector2f( 1.f, 1.f ), ig::Vector2f( 0.f, 1.f ) };
+
+			for (size_t i = 0; i < box_vertices.get_vertices().size(); i++)
+			{
+				box_vertices.get_vertices()[ i ].pos = BoxDirTable[ i ] * 32.f;
+				box_vertices.get_vertices()[ i ].clr = ig::ColorfTable::White;
+				box_vertices.get_vertices()[ i ].uv = BoxDirTable[ i ];
+			}
+
+		}
+
+		inline void start( Renderer *const r ) {
+			m_renderer = r;
+		}
+
+		inline void gen_box( const float x, const float y, const float w, const float h ) {
+			box_vertices[ 0 ].pos.x = x;
+			box_vertices[ 0 ].pos.y = y;
+
+			box_vertices[ 1 ].pos.x = x + w;
+			box_vertices[ 1 ].pos.y = y;
+
+			box_vertices[ 2 ].pos.x = x + w;
+			box_vertices[ 2 ].pos.y = y + h;
+
+			box_vertices[ 3 ].pos.x = x;
+			box_vertices[ 3 ].pos.y = y + h;
+
+			if (m_dirty_color)
+			{
+				for (size_t i = 0; i < box_vertices.get_vertices().size(); i++)
+				{
+					box_vertices[ i ].clr = m_active_style_element.color;
+				}
+			}
+
+			box_vertices.update();
+			m_dirty_color = false;
+		}
+
+		inline void gen_frame( const Rectf &outer, const Rectf &inner ) {
+			const Rectf::vector_type outer_end = outer.end();
+			const Rectf::vector_type inner_end = inner.end();
+			// quad 0
+			frame_vertices[ 0 ].pos = { outer.x, outer.y };
+			frame_vertices[ 1 ].pos = { inner.x, inner.y };
+			frame_vertices[ 2 ].pos = { inner_end.x, inner.y };
+			frame_vertices[ 3 ].pos = { outer_end.x, outer.y };
+
+			// quad 1
+			frame_vertices[ 4 ].pos = inner_end;
+			frame_vertices[ 5 ].pos = outer_end;
+
+			// quad 2
+			frame_vertices[ 6 ].pos = { inner.x, inner_end.y };
+			frame_vertices[ 7 ].pos = { outer.x, outer_end.y };
+
+			// quad 3
+			frame_vertices[ 8 ].pos = frame_vertices[ 1 ].pos;
+			frame_vertices[ 9 ].pos = frame_vertices[ 0 ].pos;
+
+			if (m_dirty_color)
+			{
+				for (size_t i = 0; i < frame_vertices.get_vertices().size(); i++)
+				{
+					frame_vertices[ i ].clr = m_active_style_element.color;
+				}
+			}
+
+			frame_vertices.update();
+			m_dirty_color = false;
+		}
+
+		inline void apply_style_element( const StyleElement &element ) {
+			if (element.color != m_active_style_element.color)
+			{
+				m_active_style_element.color = element.color;
+				m_dirty_color = true;
+			}
+
+			if (element.texture != m_active_style_element.texture)
+			{
+				m_active_style_element.texture = element.texture;
+				m_renderer->bind_texture( element.texture->get_handle() );
+			}
+		}
+
+		inline void draw_box() const {
+			m_renderer->get_canvas().draw( box_vertices.get_buffer(), index_buffers.box);
+		}
+
+		inline void draw_frame() const {
+			m_renderer->get_canvas().draw( frame_vertices.get_buffer(), index_buffers.frame);
+		}
+		
+		Vertex2Array<4> box_vertices{ ig::PrimitiveType::Triangle, 4, ig::BufferUsage::Stream }; // quad
+		Vertex2Array<10> frame_vertices{ ig::PrimitiveType::Triangle, 4 * 2 + 2, ig::BufferUsage::Stream }; // quad strip
+		const struct {
+			static constexpr IndexBuffer::element_type BoxI[ 6 * 1 ] = { 0, 1, 2, 2, 3, 0 };
+			static constexpr IndexBuffer::element_type FrameI[ 6 * 4 ] = {
+				0, 1, 2, 2, 3, 0, // quad 0
+				3, 2, 4, 4, 5, 3, // quad 1
+				5, 4, 6, 6, 7, 5, // quad 2
+				7, 6, 8, 8, 9, 7 // quad 3
+			};
+
+			const IndexBuffer box = { std::size( BoxI ), ig::VBufferUsage::StaticDraw, BoxI };
+			const IndexBuffer frame = { std::size( FrameI ), ig::VBufferUsage::StaticDraw, FrameI };
+		} index_buffers;
+	private:
+		StyleElement m_active_style_element = {};
+		bool m_dirty_color;
+		Renderer *m_renderer;
 	};
 
 
@@ -66,9 +242,9 @@ namespace igui
 	Interface::Interface()
 		: m_drawing_sc{ nullptr } {
 		// ignore this
-		constexpr size_t __stuffsz1 = sizeof( DrawingStateCache );
-		constexpr size_t __stuffsz2 = sizeof( Interface::SPDrawingStateCache );
-		static_assert(sizeof( DrawingStateCache ) <= sizeof( Interface::SPDrawingStateCache ), "Stack buffer is too small for DrawingStateCache");
+		constexpr size_t DrawingStateCacheSIZE = sizeof( DrawingStateCache );
+		constexpr size_t SPDrawingStateCacheSIZE = sizeof( Interface::SPDrawingStateCache );
+		static_assert(DrawingStateCacheSIZE <= SPDrawingStateCacheSIZE, "Stack buffer is too small for DrawingStateCache");
 	}
 
 	Interface::~Interface() {
@@ -86,24 +262,12 @@ namespace igui
 	}
 
 	void Interface::update() {
-		if (!g_ForProcessing.empty())
-			g_ForProcessing.clear();
+		NodeTree tree{ m_roots, m_nodes };
 
-		// copy the roots
-		g_ForProcessing = m_roots;
-
-		while (!g_ForProcessing.empty())
+		for (index_t i = 0; tree; i = tree.next_node())
 		{
-			// hierarchy stuff
-			index_t i = g_ForProcessing.back();
-			g_ForProcessing.pop_back();
-
 			Node &node = m_nodes[ i ];
 
-			for (index_t k : node.m_children)
-				g_ForProcessing.push_back( k );
-
-			// rects and anchors
 			if (node.m_rect_dirty)
 			{
 				const float width_dt = node.m_rect.w - node.m_old_rect.w;
@@ -123,149 +287,83 @@ namespace igui
 				node.m_old_rect = node.m_rect;
 				node.m_rect_dirty = false;
 			}
-
-
-
 		}
-
 	}
 
-	void Interface::draw( const Window *window, Renderer *renderer ) const {
-		if (!g_ForProcessing.empty())
-			g_ForProcessing.clear();
+	void Interface::draw( Renderer *renderer ) const {
+		using ParentNodeConnection = NodeTree::ParentNodeConnection;
+		static const ParentNodeConnection DefaultPNC = { 0 };
 
 		if (!m_drawing_sc)
 		{
 			m_drawing_sc = new(reinterpret_cast<void *>(m_sp_drawing_sc.memory.data())) DrawingStateCache();
 		}
 
-		nodes_indices tree_points; // <- size of this is the depth
+		m_drawing_sc->start( renderer );
+		
+		NodeTree tree{ m_roots, m_nodes };
 
-		// copy the roots
-		g_ForProcessing = m_roots;
-		while (!g_ForProcessing.empty())
+
+		for (index_t i = 0; tree; i = tree.next_node())
 		{
-			// hierarchy stuff
-
-			index_t i = g_ForProcessing.back();
-			g_ForProcessing.pop_back();
-
 			const Node &node = m_nodes[ i ];
-
-			for (index_t k : node.m_children)
-				g_ForProcessing.push_back( k );
+			const ParentNodeConnection *con = std::invoke( []( const ParentNodeConnection *c ) { return c ? c : &DefaultPNC; }, tree.get_connection() );
 
 			// drawing the node
 			switch (node.m_type)
 			{
-			case NodeType::ReferenceBox:
-				{
-					
-				}
-				break;
 			case NodeType::Panel:
 				{
-					m_drawing_sc->box_vertices.get_vertices()[ 0 ];
+					m_drawing_sc->apply_style_element(
+						m_style.panel.background.value_or( m_style.base.background.value() )
+					);
+
+					m_drawing_sc->gen_box( node.m_rect.x + con->position.x, node.m_rect.y + con->position.y, node.m_rect.w, node.m_rect.h );
+					m_drawing_sc->draw_box();
+
+					const auto boarder = m_style.panel.boarder.value_or( m_style.base.boarder.value() );
+					if (boarder.style.has_value())
+					{
+						m_drawing_sc->apply_style_element( boarder.style.value() );
+
+						m_drawing_sc->gen_frame( { node.m_rect.x - boarder.left,
+																			 node.m_rect.y - boarder.top,
+																			 node.m_rect.w + boarder.left + boarder.right,
+																			 node.m_rect.h + boarder.top + boarder.bottom  },
+																		 node.m_rect );
+						m_drawing_sc->draw_frame();
+					}
 				}
 				break;
 			case NodeType::Button:
 				{
+					m_drawing_sc->apply_style_element(
+						m_style.button.background.value_or( m_style.base.background.value() )
+					);
 
-				}
-				break;
-			case NodeType::RadialButton:
-				{
+					m_drawing_sc->gen_box( node.m_rect.x + con->position.x, node.m_rect.y + con->position.y, node.m_rect.w, node.m_rect.h );
+					m_drawing_sc->draw_box();
 
-				}
-				break;
-			case NodeType::Checkbox:
-				{
+					const auto boarder = m_style.panel.boarder.value_or( m_style.base.boarder.value() );
+					if (boarder.style.has_value())
+					{
+						m_drawing_sc->apply_style_element( boarder.style.value() );
 
-				}
-				break;
-			case NodeType::CheckButton:
-				{
-
-				}
-				break;
-			case NodeType::DropdownMenu:
-				{
-
-				}
-				break;
-			case NodeType::DropdownOption:
-				{
-
-				}
-				break;
-			case NodeType::HSlider:
-				{
-
-				}
-				break;
-			case NodeType::VSlider:
-				{
-
-				}
-				break;
-			case NodeType::HProgressBar:
-				{
-
-				}
-				break;
-			case NodeType::VProgressBar:
-				{
-
-				}
-				break;
-			case NodeType::HScrollbar:
-				{
-
-				}
-				break;
-			case NodeType::VScrollbar:
-				{
-
-				}
-				break;
-			case NodeType::Sprite:
-				{
-
-				}
-				break;
-			case NodeType::Line:
-				{
-
-				}
-				break;
-			case NodeType::SolidColor:
-				{
-
-				}
-				break;
-			case NodeType::Label:
-				{
-
-				}
-				break;
-			case NodeType::TextInput:
-				{
-
-				}
-				break;
-			case NodeType::VSeprator:
-				{
-
-				}
-				break;
-			case NodeType::HSeprator:
-				{
+						m_drawing_sc->gen_frame( { node.m_rect.x - boarder.left,
+																			 node.m_rect.y - boarder.top,
+																			 node.m_rect.w + boarder.left + boarder.right,
+																			 node.m_rect.h + boarder.top + boarder.bottom },
+																		 node.m_rect );
+						m_drawing_sc->draw_frame();
+					}
 
 				}
 				break;
 			default:
 				break;
 			}
+
+
 		}
 
 

@@ -8,15 +8,13 @@
 //   No port of this library will target MacOS
 //   C++ Exclusive
 
-// ROADMAP:
-//   Add more extensibility to drawing
-
-
-#define IGUI_IGLIB 1 // <- iglib implementation
+#include <yvals.h>
+#if !_HAS_CXX17
+#error IGUI currently supports C++17 or later versions only
+#endif
 
 #include <iglib.h>
-
-#define IGUI_IMPL IGUI_IGLIB
+#include <optional>
 
 namespace igui
 {
@@ -35,7 +33,7 @@ namespace igui
 	constexpr index_t npos = (index_t)-1;
 	constexpr index_t InvalidIndex = npos;
 
-	
+
 	using Trnsf = ig::Transform2D;
 	using Vec2f = ig::Vector2f;
 	using Vec2i = ig::Vector2i;
@@ -43,11 +41,13 @@ namespace igui
 	using Recti = ig::Rect2i;
 	using Color = ig::Colorf;
 
+	using Texture = ig::Texture;
+
 	using Window = ig::Window;
 	using Renderer = ig::Renderer;
 
 	// FIXME: literals will break if 'string' requires a wide string
-	using string = std::string; 
+	using string = std::string;
 	template <typename _T>
 	using vector = std::vector<_T>;
 
@@ -75,23 +75,18 @@ namespace igui
 		VSlider,
 		HProgressBar,
 		VProgressBar,
-		HScrollbar,
-		VScrollbar,
 
 		Sprite,
 		Line,
 		SolidColor,
-		Label,
-		TextInput,
-		VSeprator,
-		HSeprator
+		TextInput
 	};
 
 	enum StateMask : i64
 	{
 		StateMask_Enabled = 0x00'00'00'01,
 
-		StateMask_Value   = 0xff'ff'00'00,
+		StateMask_Value = 0xff'ff'00'00,
 		StateMask_FPValue = StateMask_Value,
 	};
 
@@ -128,9 +123,107 @@ namespace igui
 		SizeFlags_None = 0
 	};
 
-	struct Style
+	struct StyleElement
 	{
+		inline constexpr StyleElement() : color{ 1.f, 1.f, 1.f }, texture{ nullptr } {
+		}
 
+		inline constexpr StyleElement( const Color &clr ) : color{ clr }, texture{ nullptr } {
+		}
+
+		inline constexpr StyleElement( const Texture *tex ) : color{ 1.f, 1.f, 1.f }, texture{ tex } {
+		}
+
+		inline constexpr StyleElement( const Color &clr, const Texture *tex ) : color{ clr }, texture{ tex } {
+		}
+
+		inline StyleElement &operator=( const Color &clr ) {
+			color = clr;
+			return *this;
+		}
+
+		inline StyleElement &operator=( const Texture *tex ) {
+			texture = tex;
+			return *this;
+		}
+
+		Color color;
+		const Texture *texture;
+	};
+
+	struct InterfaceStyle
+	{
+		template <typename _T>
+		using optional = std::optional<_T>;
+		static constexpr auto novalue = std::nullopt_t( std::nullopt_t::_Tag() );
+
+		struct Shadow
+		{
+			optional<Vec2f> offset;
+			optional<Color> color;
+		};
+
+		struct Boarder
+		{
+			float left = 0, top = 0, right = 0, bottom = 0;
+			optional<StyleElement> style = novalue;
+
+			inline Boarder() {
+			}
+
+			inline Boarder( float size, Color clr )
+				: left{ size }, top{ size }, right{ size }, bottom{ size }, style{ clr } {
+			}
+
+			inline Boarder( float size )
+				: Boarder( size, { 1.f, 1.f, 1.f } ) {
+			}
+
+			inline void expand( float offset ) {
+				left += offset;
+				top += offset;
+				right += offset;
+				bottom += offset;
+			}
+
+			inline void set( float size ) {
+				left = (top = (right = (bottom = size)));
+			}
+
+		};
+
+		struct Style
+		{
+			optional<StyleElement> background = novalue;
+			optional<StyleElement> foreground = novalue;
+			optional<StyleElement> hover = novalue;
+			optional<StyleElement> pressed = novalue;
+
+			optional<Boarder> boarder = novalue;
+			optional<Shadow> shadow = novalue;
+		};
+
+		// base field's values should always exist
+		Style base = { Color( 0.14f, 0.14f, 0.14f ),   // bg
+									 Color( 0.94f, 0.94f, 0.94f ),   // fg
+									 Color( 0.14f, 0.24f, 0.44f ),   // hover
+									 Color( 0.24f, 0.44f, 0.84f ),   // pressed
+									 Boarder( 2, Color( 0.2f, 0.2f, 0.2f ) ) };
+
+		Style panel;
+		Style button;
+
+		// currently placeholders
+		Style radial_button;
+
+		Style checkbox;
+		Style check_button;
+
+		Style vertical_slider;
+		Style horizontal_slider;
+
+		Style vertical_progress_bar;
+		Style horizontal_progress_bar;
 	};
 
 	class Interface
@@ -146,7 +239,7 @@ namespace igui
 		~Interface();
 
 		void update();
-		void draw(const Window *window, Renderer *renderer) const;
+		void draw( Renderer *renderer ) const;
 
 		// to add a node it must be singlet (no parent or children) OR this will fail
 		// if 'parent' is set to InvalidIndex the node will be a root node
@@ -178,17 +271,18 @@ namespace igui
 		const DrawingStateCache *get_drawing_sc() const;
 
 	private:
+		class NodeTree;
 		// internal structure
 		struct SPDrawingStateCache
 		{
-			// FOR USERS: Changing this value from 4096 will CORRUPT the STACK
-			static constexpr size_t AllocationSize = 4096;
+			// FOR USERS: Changing this value from 2048 will CORRUPT the STACK
+			static constexpr size_t AllocationSize = 2048;
 			std::array<i32, AllocationSize / 4> memory = {};
 		};
 
 		nodes_collection m_nodes;
 		nodes_indices m_roots;
-		Style m_style;
+		InterfaceStyle m_style;
 		mutable SPDrawingStateCache m_sp_drawing_sc;
 		mutable DrawingStateCache *m_drawing_sc;
 	};
@@ -230,28 +324,31 @@ namespace igui
 
 	private:
 		NodeType m_type;
-		i64 m_state        = StateMask_Enabled;
-		i32 m_flags        = 0;
-		Rectf m_old_rect   = { 0.f, 0.f, 32.f, 32.f };
-		Rectf m_rect       = { 0.f, 0.f, 32.f, 32.f }; // <- relative rect to it's parent
-		bool m_rect_dirty  = false;
-		Rectf m_anchors    = { 0.f, 0.f, 1.f, 1.f };
-		Vec2f m_pivot      = { 0.f, 0.f };
-		float m_angle      = 0.0f;
+		i64 m_state = StateMask_Enabled;
+		i32 m_flags = 0;
+		Rectf m_old_rect = { 0.f, 0.f, 32.f, 32.f };
+		Rectf m_rect = { 0.f, 0.f, 32.f, 32.f }; // <- relative rect to it's parent
+		bool m_rect_dirty = false;
+		Rectf m_anchors = { 0.f, 0.f, 1.f, 1.f };
+		Vec2f m_pivot = { 0.f, 0.f };
+		float m_angle = 0.0f;
 
 		MouseFilter m_mouse_filter = MouseFilter::Stop;
 		CursorShape m_cursor_shape = CursorShape::Arrow;
 
-		string m_text      = "Sample text";
-		string m_tooltip   = "Sample tooltip"; // <- empty tooltip will not be displayed
+		string m_text = "Sample text";
+		string m_tooltip = "Sample tooltip"; // <- empty tooltip will not be displayed
+
+		i16 m_text_align;
+		i16 m_tooltip_state;
 
 		struct {
 			SizeFlags horizontal = SizeFlags_None;
-			SizeFlags vertical   = SizeFlags_None;
+			SizeFlags vertical = SizeFlags_None;
 		} m_size_flags;
 
 		vector<index_t> m_children = {};
-		index_t         m_parent   = InvalidIndex;
+		index_t         m_parent = InvalidIndex;
 	};
 
 	template<typename _PRED>
