@@ -241,16 +241,21 @@ namespace igui
 		void update();
 		void draw( Renderer *renderer ) const;
 
-		// to add a node it must be singlet (no parent or children) OR this will fail
-		// if 'parent' is set to InvalidIndex the node will be a root node
-		// [On Error] InvalidIndex will be returned
-		index_t add_node( const Node &node, index_t parent = InvalidIndex );
+		/// @brief to add a node it must be singlet (no parent or children) OR this will fail
+		/// @brief if 'parent' is set to [npos] the node will be a root node
+		/// @error [npos] will be returned
+		index_t add_node( const Node &node, index_t parent = npos );
+		
+		/// @brief remove the node at [node_index], removing it's children too
+		/// @brief will change the index of some nodes so be careful
+		/// @param node_index the node index to remove, invalid indices will be ignored
+		void remove_node( const index_t node_index );
 
-		// to transfer the branch node (the node at 'node_index') an it children
-		// the branch node will be parented to 'parent'
-		// if 'parent' is set to InvalidIndex the node will be a root node
-		// [On Error] InvalidIndex will be returned
-		index_t transfer_branch( const this_type &old, index_t node_index, index_t parent = InvalidIndex );
+		/// @brief to transfer the branch node (the node at 'node_index') an it children
+		/// @brief the branch node will be parented to 'parent'
+		/// @brief if 'parent' is set to [npos] the node will be a root node
+		/// @error [npos] will be returned
+		index_t transfer_branch( const this_type &old, index_t node_index, index_t parent = npos );
 
 		template <typename _PRED>
 		inline index_t find_node( _PRED predicate ) const;
@@ -274,6 +279,9 @@ namespace igui
 		void validate();
 
 	private:
+		vector<index_t> &&get_family(const index_t node_index) const;
+
+	private:
 		class NodeTree;
 		// internal structure
 		struct SPDrawingStateCache
@@ -290,6 +298,7 @@ namespace igui
 		mutable DrawingStateCache *m_drawing_sc;
 	};
 
+	typedef void(*NodeActionProc)(Node *node, i16 action);
 	class Node
 	{
 		friend Interface;
@@ -306,6 +315,10 @@ namespace igui
 
 		inline i64 state() const noexcept {
 			return m_state;
+		}
+
+		inline const vector<index_t> &get_children() const noexcept {
+			return m_children;
 		}
 
 		void set_position( Vec2f pos );
@@ -349,15 +362,16 @@ namespace igui
 		string m_tooltip = "Sample tooltip"; // <- empty tooltip will not be displayed
 
 		i16 m_text_align = 0;
-		i16 m_tooltip_state = 0;
 
 		struct {
 			SizeFlags horizontal = SizeFlags_None;
 			SizeFlags vertical = SizeFlags_None;
 		} m_size_flags;
 
+		NodeActionProc m_action = nullptr;
+
 		vector<index_t> m_children = {};
-		index_t         m_parent = InvalidIndex;
+		index_t         m_parent = npos;
 	};
 
 	template<typename _PRED>
@@ -368,7 +382,7 @@ namespace igui
 			if (predicate( m_nodes[ i ] ))
 				return i;
 		}
-		return InvalidIndex;
+		return npos;
 	}
 
 	inline i32 Node::value() const noexcept {

@@ -393,6 +393,54 @@ namespace igui
 		return node_index;
 	}
 
+	void Interface::remove_node( const index_t node_index ) {
+		// invalid index
+		if (node_index >= m_nodes.size())
+			return;
+
+		// gather and sort family
+		vector<index_t> family = get_family( node_index );
+
+		// sorting so we start to erase elements closer to the back for performance reasons
+		// also, if this isn't sorted, some tobe-deleted nodes will change their index
+		std::sort( family.begin(), family.end(), []( const index_t a, const index_t b ) { return a < b; } );
+		
+		const index_t lowest_removed_node = family[ 0 ];
+
+		// remove the family
+		for (const index_t n : family)
+		{
+			m_nodes[ n ].m_index = npos;
+			m_nodes[ n ].m_parent = npos;
+			m_nodes[ n ].m_children.clear();
+			m_nodes.erase( m_nodes.cbegin() + n );
+		}
+
+		// post removal of target nodes
+		const size_t nodes_count = m_nodes.size();
+
+		// update node's indices
+		for (index_t i = lowest_removed_node; i < nodes_count; i++)
+		{
+			m_nodes[ i ].m_index = i;
+		}
+
+		// TODO ->>>
+
+		// update node's children/parents
+		for (index_t i = 0; i < nodes_count; i++)
+		{
+			if (m_nodes[ i ].m_parent > lowest_removed_node)
+			{
+				for (index_t j = lowest_removed_node + 1; j < nodes_count; j++)
+				{
+
+				}
+			}
+		}
+
+	}
+
 	index_t Interface::transfer_branch( const this_type &old, index_t node_index, index_t parent ) {
 		return InvalidIndex;
 	}
@@ -445,6 +493,41 @@ namespace igui
 
 		}
 
+	}
+
+	vector<index_t> &&Interface::get_family( const index_t node_index ) const {
+		vector<index_t> indices{};
+		vector<index_t> tobe_processed{};
+		tobe_processed.push_back( node_index );
+
+		const size_t nodes_count = m_nodes.size();
+		size_t limit = 0;
+		while (!tobe_processed.empty())
+		{
+#ifdef _DEBUG
+			if (++limit > 1000'000)
+			{
+				// maybe a child has the parent as a child, creating a cycle reference
+				break;
+			}
+#endif // _DEBUG
+			const size_t n = tobe_processed.back();
+			tobe_processed.pop_back();
+			
+			// invalid node index
+			if (n >= nodes_count)
+				continue;
+
+			if (!m_nodes[n].m_children.empty())
+			{
+				tobe_processed.insert( tobe_processed.cend(), m_nodes[ n ].m_children.cbegin(), m_nodes[ n ].m_children.cend() );
+			}
+
+			indices.push_back( n );
+		}
+
+
+		return std::move( indices );
 	}
 
 	DrawingStateCache *Interface::get_drawing_sc() {
