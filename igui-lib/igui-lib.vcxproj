@@ -159,6 +159,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\igui.h" />
+    <ClInclude Include="src\internal.h" />
     <ClInclude Include="src\pch.h" />
   </ItemGroup>
   <ItemGroup>
