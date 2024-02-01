@@ -30,6 +30,8 @@ namespace igui
 	typedef int64_t i64;
 
 	typedef size_t index_t;
+	typedef intptr_t offset_t;
+
 	constexpr index_t npos = (index_t)-1;
 	constexpr index_t InvalidIndex = npos;
 
@@ -51,6 +53,14 @@ namespace igui
 	template <typename _T>
 	using vector = std::vector<_T>;
 
+	struct InputEvent
+	{
+		ig::InputEvent input;
+		ig::InputEventType type;
+	};
+
+	using KeyCode = ig::KeyCode;
+	using MouseButton = ig::MouseButton;
 
 	class Node;
 	class NodeFactory;
@@ -241,6 +251,8 @@ namespace igui
 		void update();
 		void draw( Renderer *renderer ) const;
 
+		void input( InputEvent event );
+
 		/// @brief to add a node it must be singlet (no parent or children) OR this will fail
 		/// @brief if 'parent' is set to [npos] the node will be a root node
 		/// @error [npos] will be returned
@@ -283,6 +295,7 @@ namespace igui
 
 	private:
 		class NodeTree;
+		class InputRecord;
 		// internal structure
 		struct SPDrawingStateCache
 		{
@@ -291,9 +304,11 @@ namespace igui
 			std::array<i32, AllocationSize / 4> memory = {};
 		};
 
+		size_t m_ticks;
 		nodes_collection m_nodes;
 		nodes_indices m_roots;
 		InterfaceStyle m_style;
+		std::unique_ptr<InputRecord> m_input;
 		mutable SPDrawingStateCache m_sp_drawing_sc;
 		mutable DrawingStateCache *m_drawing_sc;
 	};

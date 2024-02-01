@@ -2,6 +2,8 @@
 #include "igui.h"
 using namespace igui;
 
+#include "internal.h"
+
 using DrawingStateCache = Interface::DrawingStateCache;
 
 #if IGUI_IMPL == IGUI_IGLIB
@@ -104,6 +106,100 @@ private:
 	typename const Interface::nodes_collection &m_nodes_ref;
 	Interface::nodes_indices m_nodes;
 	vector<ParentNodeConnection> m_connections;
+};
+
+class Interface::InputRecord
+{
+public:
+	static constexpr size_t RecordSize = 512;
+	static constexpr size_t key_offset = 32;
+	static constexpr size_t mbutton_offset = 1;
+	static constexpr size_t mscroll_offset = 0;
+
+	struct InputValue
+	{
+		union
+		{
+			bool active;
+			struct
+			{
+				int16_t x, y;
+			};
+
+		} state;
+		index_t update_tick;
+	};
+
+	inline void update() {
+		m_tick++;
+	}
+
+	inline void input( InputEvent event ) {
+		const ig::InputEvent input = event.input;
+
+		switch (event.type)
+		{
+		case ig::InputEventType::Key:
+			{
+				if (m_values[ static_cast<size_t>(input.key.keycode) + key_offset ].state.active != (input.key.action != ig::InputAction::Released))
+				{
+					m_values[ static_cast<size_t>(input.key.keycode) + key_offset ].update_tick = m_tick;
+					m_values[ static_cast<size_t>(input.key.keycode) + key_offset ].state.active = (input.key.action != ig::InputAction::Released);
+				}
+			}
+			break;
+		case ig::InputEventType::MouseButton:
+			{
+				if (m_values[ static_cast<size_t>(input.mouse_button.button) + mbutton_offset ].state.active != (input.mouse_button.action != ig::InputAction::Released))
+				{
+					m_values[ static_cast<size_t>(input.mouse_button.button) + mbutton_offset ].update_tick = m_tick;
+					m_values[ static_cast<size_t>(input.mouse_button.button) + mbutton_offset ].state.active = (input.mouse_button.action != ig::InputAction::Released);
+				}
+			}
+			break;
+		case ig::InputEventType::MouseScrollWheel:
+			{
+				m_values[ mscroll_offset ].update_tick = m_tick;
+				m_values[ mscroll_offset ].state.x = input.mouse_scroll.x;
+				m_values[ mscroll_offset ].state.y = input.mouse_scroll.y;
+			}
+			break;
+		default:
+			break;
+		}
+	}
+
+	inline bool is_pressed( const KeyCode key ) {
+		return m_values[ static_cast<size_t>(key) + key_offset ].state.active;
+	}
+
+	inline bool is_just_released( const KeyCode key ) {
+		return m_values[ static_cast<size_t>(key) + key_offset ].update_tick == m_tick && !m_values[ static_cast<size_t>(key) + key_offset ].state.active;
+	}
+
+	inline bool is_just_pressed( const KeyCode key ) {
+		return m_values[ static_cast<size_t>(key) + key_offset ].update_tick == m_tick && m_values[ static_cast<size_t>(key) + key_offset ].state.active;
+	}
+
+
+	inline bool is_pressed( const MouseButton button ) {
+		return m_values[ static_cast<size_t>(button) + mbutton_offset ].state.active;
+	}
+
+	inline bool is_just_released( const MouseButton button ) {
+		return m_values[ static_cast<size_t>(button) + mbutton_offset ].update_tick == m_tick && !m_values[ static_cast<size_t>(button) + mbutton_offset ].state.active;
+	}
+
+	inline bool is_just_pressed( const MouseButton button ) {
+		return m_values[ static_cast<size_t>(button) + mbutton_offset ].update_tick == m_tick && m_values[ static_cast<size_t>(button) + mbutton_offset ].state.active;
+	}
+
+	
+	Vec2f mouse_pos; // transformed
+	Vec2f raw_mouse_pos; // raw
+private:
+	size_t m_tick;
+	stacklist<InputValue, RecordSize> m_values;
 };
 
 namespace igui
@@ -226,8 +322,8 @@ namespace igui
 		} index_buffers;
 	private:
 		StyleElement m_active_style_element = {};
-		bool m_dirty_color;
-		Renderer *m_renderer;
+		bool m_dirty_color = true;
+		Renderer *m_renderer = nullptr;
 	};
 
 
@@ -240,7 +336,7 @@ namespace igui
 	}
 
 	Interface::Interface()
-		: m_drawing_sc{ nullptr } {
+		: m_drawing_sc{ nullptr }, m_ticks{ 0 } {
 		// ignore this
 		constexpr size_t DrawingStateCacheSIZE = sizeof( DrawingStateCache );
 		constexpr size_t SPDrawingStateCacheSIZE = sizeof( Interface::SPDrawingStateCache );
@@ -288,6 +384,8 @@ namespace igui
 				node.m_rect_dirty = false;
 			}
 		}
+
+		m_ticks++;
 	}
 
 	void Interface::draw( Renderer *renderer ) const {
@@ -300,6 +398,9 @@ namespace igui
 		}
 
 		m_drawing_sc->start( renderer );
+
+		m_input->raw_mouse_pos = Vec2f( renderer->get_window().get_mouse_position() );
+		m_input->mouse_pos = renderer->get_canvas().transform2d() * m_input->raw_mouse_pos;
 
 		NodeTree tree{ m_roots, m_nodes };
 
@@ -371,6 +472,10 @@ namespace igui
 
 	}
 
+	void Interface::input( InputEvent event ) {
+
+	}
+
 	index_t Interface::add_node( const Node &node, index_t parent ) {
 		// use add_branch() for this case, not add_node()
 		if (node.m_parent != InvalidIndex || !node.m_children.empty())
@@ -401,11 +506,16 @@ namespace igui
 		// gather and sort family
 		vector<index_t> family = get_family( node_index );
 
+		// is this needed?
+		if (family.empty())
+			return;
+
 		// sorting so we start to erase elements closer to the back for performance reasons
 		// also, if this isn't sorted, some tobe-deleted nodes will change their index
+		// should be sorted from BIGGEST to SMALLEST
 		std::sort( family.begin(), family.end(), []( const index_t a, const index_t b ) { return a < b; } );
-		
-		const index_t lowest_removed_node = family[ 0 ];
+
+		const index_t lowest_removed_node = family.back();
 
 		// remove the family
 		for (const index_t n : family)
@@ -418,6 +528,7 @@ namespace igui
 
 		// post removal of target nodes
 		const size_t nodes_count = m_nodes.size();
+		const size_t family_size = family.size();
 
 		// update node's indices
 		for (index_t i = lowest_removed_node; i < nodes_count; i++)
@@ -425,20 +536,43 @@ namespace igui
 			m_nodes[ i ].m_index = i;
 		}
 
+
 		// TODO ->>>
+		const auto drop_steps = [ &family, family_size ]( const index_t index ) {
+			for (size_t i = family_size - 1; i > 0; i--)
+			{
+				if (family[ i ] >= index)
+					return family_size - i;
+			}
+			return family[ 0 ] < index ? family_size : family_size - 1;
+			};
 
 		// update node's children/parents
 		for (index_t i = 0; i < nodes_count; i++)
 		{
 			if (m_nodes[ i ].m_parent > lowest_removed_node)
 			{
-				for (index_t j = lowest_removed_node + 1; j < nodes_count; j++)
+				const index_t droped_value = drop_steps( m_nodes[ i ].m_parent );
+				if (droped_value > m_nodes[ i ].m_parent)
 				{
-
+					//! BUG BUG, this block shouldn't be reached
 				}
+				m_nodes[ i ].m_parent -= droped_value;
+			}
+
+			for (index_t &child_index : m_nodes[ i ].m_children)
+			{
+				const index_t droped_value = drop_steps( child_index );
+				if (droped_value > child_index)
+				{
+					//! if this block is executed, we might fucked up with the drop_steps lambda
+				}
+				child_index -= droped_value;
 			}
 		}
 
+		// should we validate?
+		//validate();
 	}
 
 	index_t Interface::transfer_branch( const this_type &old, index_t node_index, index_t parent ) {
@@ -467,6 +601,11 @@ namespace igui
 				if (child_index >= nodes_count)
 				{
 					//! invalid child index
+				}
+
+				if (child_index == node_index)
+				{
+					//! node is it's own child
 				}
 
 				if (m_nodes[ child_index ].m_parent != node_index)
@@ -513,12 +652,12 @@ namespace igui
 #endif // _DEBUG
 			const size_t n = tobe_processed.back();
 			tobe_processed.pop_back();
-			
+
 			// invalid node index
 			if (n >= nodes_count)
 				continue;
 
-			if (!m_nodes[n].m_children.empty())
+			if (!m_nodes[ n ].m_children.empty())
 			{
 				tobe_processed.insert( tobe_processed.cend(), m_nodes[ n ].m_children.cbegin(), m_nodes[ n ].m_children.cend() );
 			}
