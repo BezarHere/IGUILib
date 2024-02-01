@@ -24,9 +24,18 @@ int main() {
 
 	{
 		Node n{ igui::NodeType::Button };
-		n.set_rect( { 32.f, 32.f, 64.f, 64.f } );
+		n.set_rect( { 0.f, 0.f, 512.f, 512.f } );
+
+		Node boxes{ igui::NodeType::Button };
+		boxes.set_rect( { 0.f, 0.f, 32.f, 32.f } );
 
 		index_t t = interface.add_node( n );
+
+		for (int i = 0; i < 9; i++)
+		{
+			interface.add_node( Node(boxes), t );
+		}
+
 	}
 
 	while (!wind.should_close())
