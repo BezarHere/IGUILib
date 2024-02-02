@@ -23,6 +23,14 @@ constexpr size_t InterfaceTSIZE = sizeof( Interface );
 static_assert(NodeTSIZE < 256, "A node should be smaller then 256B, but it's NOT, fix");
 static_assert(InterfaceTSIZE < 8192, "What are you doing? an interface should be smaller then 8KB");
 
+enum class MousePressedState
+{
+	None = 0,
+	Hovered,
+	Pressed,
+	Released
+};
+
 class Interface::NodeTree
 {
 public:
@@ -116,6 +124,7 @@ public:
 	static constexpr size_t mbutton_offset = 1;
 	static constexpr size_t mscroll_offset = 0;
 
+
 	struct InputValue
 	{
 		union
@@ -129,6 +138,10 @@ public:
 		} state;
 		index_t update_tick;
 	};
+
+	inline InputRecord() : m_tick{ 0 } {
+		m_values.resize( m_values.capacity );
+	}
 
 	inline void update() {
 		m_tick++;
@@ -169,34 +182,44 @@ public:
 		}
 	}
 
-	inline bool is_pressed( const KeyCode key ) {
+	inline bool is_pressed( const KeyCode key ) const {
 		return m_values[ static_cast<size_t>(key) + key_offset ].state.active;
 	}
 
-	inline bool is_just_released( const KeyCode key ) {
+	inline bool is_just_released( const KeyCode key ) const {
 		return m_values[ static_cast<size_t>(key) + key_offset ].update_tick == m_tick && !m_values[ static_cast<size_t>(key) + key_offset ].state.active;
 	}
 
-	inline bool is_just_pressed( const KeyCode key ) {
+	inline bool is_just_pressed( const KeyCode key ) const {
 		return m_values[ static_cast<size_t>(key) + key_offset ].update_tick == m_tick && m_values[ static_cast<size_t>(key) + key_offset ].state.active;
 	}
 
 
-	inline bool is_pressed( const MouseButton button ) {
+	inline bool is_pressed( const MouseButton button ) const {
 		return m_values[ static_cast<size_t>(button) + mbutton_offset ].state.active;
 	}
 
-	inline bool is_just_released( const MouseButton button ) {
+	inline bool is_just_released( const MouseButton button ) const {
 		return m_values[ static_cast<size_t>(button) + mbutton_offset ].update_tick == m_tick && !m_values[ static_cast<size_t>(button) + mbutton_offset ].state.active;
 	}
 
-	inline bool is_just_pressed( const MouseButton button ) {
+	inline bool is_just_pressed( const MouseButton button ) const {
 		return m_values[ static_cast<size_t>(button) + mbutton_offset ].update_tick == m_tick && m_values[ static_cast<size_t>(button) + mbutton_offset ].state.active;
 	}
 
-	
-	Vec2f mouse_pos; // transformed
-	Vec2f raw_mouse_pos; // raw
+	inline MousePressedState get_mouse_pressed_state( const MouseButton button ) const {
+		if (m_values[ static_cast<size_t>(button) + mbutton_offset ].state.active)
+		{
+			return MousePressedState::Pressed;
+		}
+
+		return m_values[ static_cast<size_t>(button) + mbutton_offset ].update_tick == m_tick ?
+			MousePressedState::Released : MousePressedState::Hovered;
+	}
+
+
+	Vec2f mouse_pos = {}; // transformed
+	Vec2f raw_mouse_pos = {}; // raw
 private:
 	size_t m_tick;
 	stacklist<InputValue, RecordSize> m_values;
@@ -336,7 +359,7 @@ namespace igui
 	}
 
 	Interface::Interface()
-		: m_drawing_sc{ nullptr }, m_ticks{ 0 } {
+		: m_drawing_sc{ nullptr }, m_ticks{ 0 }, m_input{ new InputRecord() } {
 		// ignore this
 		constexpr size_t DrawingStateCacheSIZE = sizeof( DrawingStateCache );
 		constexpr size_t SPDrawingStateCacheSIZE = sizeof( Interface::SPDrawingStateCache );
@@ -385,6 +408,7 @@ namespace igui
 			}
 		}
 
+		m_input->update();
 		m_ticks++;
 	}
 
@@ -400,7 +424,16 @@ namespace igui
 		m_drawing_sc->start( renderer );
 
 		m_input->raw_mouse_pos = Vec2f( renderer->get_window().get_mouse_position() );
-		m_input->mouse_pos = renderer->get_canvas().transform2d() * m_input->raw_mouse_pos;
+
+		// i fucked the how the transforms are applied that applying 
+		// the transform on the gpu is the inverted (or the reverse)
+		// so this is the 'inverted transform' for now...
+		const Trnsf inverted_transform = renderer->get_canvas().transform2d();
+
+		m_input->mouse_pos = inverted_transform * m_input->raw_mouse_pos;
+
+		renderer->get_canvas().circle( 8.f, m_input->mouse_pos, { 0.25f, 0.5f, 0.75f }, 8 );
+		renderer->get_canvas().circle( 4.f, m_input->raw_mouse_pos, { 0.75f, 0.5f, 0.25f }, 8 );
 
 		NodeTree tree{ m_roots, m_nodes };
 
@@ -409,8 +442,15 @@ namespace igui
 		{
 			const Node &node = m_nodes[ i ];
 			const ParentNodeConnection *con = ([]( const ParentNodeConnection *c ) { return c ? c : &DefaultPNC; })(tree.get_connection());
+
+			// trash, all trash
 			const Vec2f node_global_pos = { con->position.x + node.m_rect.x, con->position.y + node.m_rect.y };
 			const Rectf node_global_rect = { node_global_pos.x, node_global_pos.y, node.m_rect.w, node.m_rect.h };
+			const bool mouse_inside = node_global_rect.contains( m_input->mouse_pos );
+
+
+			const MousePressedState mb_state = mouse_inside ?
+				(m_input->get_mouse_pressed_state( node.m_trigger_button )) : MousePressedState::None;
 
 			// drawing the node
 			switch (node.m_type)
@@ -447,7 +487,25 @@ namespace igui
 					m_drawing_sc->gen_box( node_global_pos.x, node_global_pos.y, node_global_rect.w, node_global_rect.h );
 					m_drawing_sc->draw_box();
 
-					const auto boarder = m_style.panel.boarder.value_or( m_style.base.boarder.value() );
+					const InterfaceStyle::Boarder &boarder = std::invoke(
+						[ this, mb_state ]() {
+							if (mb_state == MousePressedState::Hovered)
+							{
+								return m_style.button.hover_boarder.value_or(
+									m_style.base.hover_boarder.value_or( m_style.base.boarder.value() )
+								);
+							}
+
+							if (mb_state == MousePressedState::Pressed)
+							{
+								return m_style.button.pressed_boarder.value_or(
+									m_style.base.pressed_boarder.value_or( m_style.base.boarder.value() )
+								);
+							}
+
+							return m_style.button.boarder.value_or( m_style.base.boarder.value() );
+						} );
+
 					if (boarder.style.has_value())
 					{
 						m_drawing_sc->apply_style_element( boarder.style.value() );
@@ -459,6 +517,8 @@ namespace igui
 																		 node_global_rect );
 						m_drawing_sc->draw_frame();
 					}
+
+
 
 				}
 				break;
@@ -473,7 +533,7 @@ namespace igui
 	}
 
 	void Interface::input( InputEvent event ) {
-
+		m_input->input( event );
 	}
 
 	index_t Interface::add_node( const Node &node, index_t parent ) {

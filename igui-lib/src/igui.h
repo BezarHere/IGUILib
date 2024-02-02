@@ -13,6 +13,7 @@
 #error IGUI currently supports C++17 or later versions only
 #endif
 
+#include <iostream>
 #include <iglib.h>
 #include <optional>
 
@@ -206,19 +207,32 @@ namespace igui
 		{
 			optional<StyleElement> background = novalue;
 			optional<StyleElement> foreground = novalue;
-			optional<StyleElement> hover = novalue;
-			optional<StyleElement> pressed = novalue;
+
+			optional<StyleElement> hover = novalue; // fallback to background
+			optional<Boarder> hover_boarder = novalue;  // fallback to boarder
+			optional<Shadow> hover_shadow = novalue; // fallback to shadow
+
+			optional<StyleElement> pressed = novalue; // fallback to background
+			optional<Boarder> pressed_boarder = novalue;  // fallback to boarder
+			optional<Shadow> pressed_shadow = novalue; // fallback to shadow
 
 			optional<Boarder> boarder = novalue;
 			optional<Shadow> shadow = novalue;
 		};
 
 		// base field's values should always exist
+		// FIXME: how it's constructed is unreliable and buggy
 		Style base = { Color( 0.14f, 0.14f, 0.14f ),   // bg
 									 Color( 0.94f, 0.94f, 0.94f ),   // fg
 									 Color( 0.14f, 0.24f, 0.44f ),   // hover
+									 Boarder( 2, Color( 0.4f, 0.4f, 0.4f ) ), // hover boarder
+									 novalue, // hover shadow
 									 Color( 0.24f, 0.44f, 0.84f ),   // pressed
-									 Boarder( 2, Color( 0.2f, 0.2f, 0.2f ) ) };
+									 Boarder( 4, Color( 0.3f, 0.3f, 0.3f ) ), // pressed boarder
+									 novalue, // pressed shadow
+									 Boarder( 2, Color( 0.2f, 0.2f, 0.2f ) ), // base boarder
+									 novalue // base shadow
+		};
 
 		Style panel;
 		Style button;
@@ -257,7 +271,7 @@ namespace igui
 		/// @brief if 'parent' is set to [npos] the node will be a root node
 		/// @error [npos] will be returned
 		index_t add_node( const Node &node, index_t parent = npos );
-		
+
 		/// @brief remove the node at [node_index], removing it's children too
 		/// @brief will change the index of some nodes so be careful
 		/// @param node_index the node index to remove, invalid indices will be ignored
@@ -291,7 +305,7 @@ namespace igui
 		void validate();
 
 	private:
-		vector<index_t> &&get_family(const index_t node_index) const;
+		vector<index_t> &&get_family( const index_t node_index ) const;
 
 	private:
 		class NodeTree;
@@ -372,6 +386,7 @@ namespace igui
 
 		MouseFilter m_mouse_filter = MouseFilter::Stop;
 		CursorShape m_cursor_shape = CursorShape::Arrow;
+		MouseButton m_trigger_button = MouseButton::Left;
 
 		string m_text = "Sample text";
 		string m_tooltip = "Sample tooltip"; // <- empty tooltip will not be displayed
