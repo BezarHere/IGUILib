@@ -31,6 +31,32 @@ enum class MousePressedState
 	Released
 };
 
+
+template <typename _OPTIONAL>
+static inline const _OPTIONAL::value_type &get_value_cascade( const _OPTIONAL &val ) {
+	return val.value();
+}
+
+#pragma warning(push)
+#pragma warning(disable:4172)
+template <typename _OPTIONAL, typename... _OPTIONAL_REST>
+static inline const _OPTIONAL::value_type &get_value_cascade( const _OPTIONAL &val, const _OPTIONAL_REST &...rest ) {
+	return val.value_or( get_value_cascade( rest... ) );
+}
+#pragma warning(pop)
+
+
+template <typename _OPTIONAL>
+static inline _OPTIONAL::value_type &get_value_cascade( _OPTIONAL &val ) {
+	return val.value();
+}
+
+template <typename _OPTIONAL, typename... _OPTIONAL_REST>
+static inline _OPTIONAL::value_type &get_value_cascade( _OPTIONAL &val, _OPTIONAL_REST &...rest ) {
+	return val.value_or( get_value_cascade( rest ) );
+}
+
+
 class Interface::NodeTree
 {
 public:
@@ -481,7 +507,7 @@ namespace igui
 			case NodeType::Button:
 				{
 					m_drawing_sc->apply_style_element(
-						m_style.button.background.value_or( m_style.base.background.value() )
+						get_value_cascade( m_style.button.background, m_style.base.background )
 					);
 
 					m_drawing_sc->gen_box( node_global_pos.x, node_global_pos.y, node_global_rect.w, node_global_rect.h );
@@ -694,7 +720,7 @@ namespace igui
 
 	}
 
-	vector<index_t> &&Interface::get_family( const index_t node_index ) const {
+	vector<index_t> Interface::get_family( const index_t node_index ) const {
 		vector<index_t> indices{};
 		vector<index_t> tobe_processed{};
 		tobe_processed.push_back( node_index );
@@ -726,7 +752,7 @@ namespace igui
 		}
 
 
-		return std::move( indices );
+		return indices;
 	}
 
 	DrawingStateCache *Interface::get_drawing_sc() {

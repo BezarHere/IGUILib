@@ -307,7 +307,7 @@ namespace igui
 		void validate();
 
 	private:
-		vector<index_t> &&get_family( const index_t node_index ) const;
+		vector<index_t> get_family( const index_t node_index ) const;
 
 	private:
 		class NodeTree;
