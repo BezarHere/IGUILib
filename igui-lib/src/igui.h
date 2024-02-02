@@ -31,6 +31,7 @@ namespace igui
 	typedef int64_t i64;
 
 	typedef size_t index_t;
+	typedef size_t uintptr_t;
 	typedef intptr_t offset_t;
 
 	constexpr index_t npos = (index_t)-1;
@@ -93,11 +94,12 @@ namespace igui
 		TextInput
 	};
 
-	enum StateMask : i64
+	enum StateMask : u64
 	{
-		StateMask_Enabled = 0x00'00'00'01,
+		StateMask_Enabled = 0x0000'0001,
+		StateMask_Hovered = 0x0000'0002,
 
-		StateMask_Value = 0xff'ff'00'00,
+		StateMask_Value = 0xffff'ffff'0000'0000,
 		StateMask_FPValue = StateMask_Value,
 	};
 
@@ -327,7 +329,7 @@ namespace igui
 		mutable DrawingStateCache *m_drawing_sc;
 	};
 
-	typedef void(*NodeActionProc)(Node *node, i16 action);
+	typedef void(*NodeSignalProc)(Node *node, uintptr_t action);
 	class Node
 	{
 		friend Interface;
@@ -371,12 +373,22 @@ namespace igui
 			return m_index;
 		}
 
+
+		inline void set_signal_proc( const NodeSignalProc proc ) noexcept {
+			m_signal_proc = proc;
+		}
+
+		inline NodeSignalProc get_signal_proc() const noexcept {
+			return m_signal_proc;
+		}
+
+
 	private:
 		NodeType m_type;
 		index_t m_index;
 
-		i64 m_state = StateMask_Enabled;
-		i32 m_flags = 0;
+		u64 m_state = StateMask_Enabled;
+		u32 m_flags = 0;
 		Rectf m_old_rect = { 0.f, 0.f, 32.f, 32.f };
 		Rectf m_rect = { 0.f, 0.f, 32.f, 32.f }; // <- relative rect to it's parent
 		bool m_rect_dirty = false;
@@ -398,7 +410,7 @@ namespace igui
 			SizeFlags vertical = SizeFlags_None;
 		} m_size_flags;
 
-		NodeActionProc m_action = nullptr;
+		NodeSignalProc m_signal_proc = nullptr;
 
 		vector<index_t> m_children = {};
 		index_t         m_parent = npos;
