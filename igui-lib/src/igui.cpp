@@ -33,26 +33,28 @@ enum class MousePressedState
 
 
 template <typename _OPTIONAL>
-static inline const _OPTIONAL::value_type &get_value_cascade( const _OPTIONAL &val ) {
+static FORCEINLINE const _OPTIONAL::value_type &get_value_cascade( const _OPTIONAL &val ) {
 	return val.value();
 }
 
 #pragma warning(push)
 #pragma warning(disable:4172)
+// NOTE: Optimizing this is a piority
 template <typename _OPTIONAL, typename... _OPTIONAL_REST>
-static inline const _OPTIONAL::value_type &get_value_cascade( const _OPTIONAL &val, const _OPTIONAL_REST &...rest ) {
+static FORCEINLINE const _OPTIONAL::value_type &get_value_cascade( const _OPTIONAL &val, const _OPTIONAL_REST &...rest ) {
 	return val.value_or( get_value_cascade( rest... ) );
 }
 #pragma warning(pop)
 
 
 template <typename _OPTIONAL>
-static inline _OPTIONAL::value_type &get_value_cascade( _OPTIONAL &val ) {
+static FORCEINLINE _OPTIONAL::value_type &get_value_cascade( _OPTIONAL &val ) {
 	return val.value();
 }
 
+// NOTE: Optimizing this is a piority
 template <typename _OPTIONAL, typename... _OPTIONAL_REST>
-static inline _OPTIONAL::value_type &get_value_cascade( _OPTIONAL &val, _OPTIONAL_REST &...rest ) {
+static FORCEINLINE _OPTIONAL::value_type &get_value_cascade( _OPTIONAL &val, _OPTIONAL_REST &...rest ) {
 	return val.value_or( get_value_cascade( rest ) );
 }
 
@@ -461,8 +463,9 @@ namespace igui
 		renderer->get_canvas().circle( 8.f, m_input->mouse_pos, { 0.25f, 0.5f, 0.75f }, 8 );
 		renderer->get_canvas().circle( 4.f, m_input->raw_mouse_pos, { 0.75f, 0.5f, 0.25f }, 8 );
 
-		NodeTree tree{ m_roots, m_nodes };
+		// TODO: create a style image to optimize style fetching
 
+		NodeTree tree{ m_roots, m_nodes };
 
 		for (index_t i = 0; tree; i = tree.next_node())
 		{
@@ -477,6 +480,11 @@ namespace igui
 
 			const MousePressedState mb_state = mouse_inside ?
 				(m_input->get_mouse_pressed_state( node.m_trigger_button )) : MousePressedState::None;
+
+			node.m_state =
+				(node.m_state & ~(StateMask_Hovered | StateMask_Pressed)) |
+				(mouse_inside ? 0 : StateMask_Hovered) |
+				(mb_state == MousePressedState::Pressed ? 0 : StateMask_Pressed);
 
 			// drawing the node
 			switch (node.m_type)
@@ -638,22 +646,22 @@ namespace igui
 		{
 			if (m_nodes[ i ].m_parent > lowest_removed_node)
 			{
-				const index_t droped_value = drop_steps( m_nodes[ i ].m_parent );
-				if (droped_value > m_nodes[ i ].m_parent)
+				const index_t dropped_value = drop_steps( m_nodes[ i ].m_parent );
+				if (dropped_value > m_nodes[ i ].m_parent)
 				{
 					//! BUG BUG, this block shouldn't be reached
 				}
-				m_nodes[ i ].m_parent -= droped_value;
+				m_nodes[ i ].m_parent -= dropped_value;
 			}
 
 			for (index_t &child_index : m_nodes[ i ].m_children)
 			{
-				const index_t droped_value = drop_steps( child_index );
-				if (droped_value > child_index)
+				const index_t dropped_value = drop_steps( child_index );
+				if (dropped_value > child_index)
 				{
 					//! if this block is executed, we might fucked up with the drop_steps lambda
 				}
-				child_index -= droped_value;
+				child_index -= dropped_value;
 			}
 		}
 

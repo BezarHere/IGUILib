@@ -98,6 +98,10 @@ namespace igui
 	{
 		StateMask_Enabled = 0x0000'0001,
 		StateMask_Hovered = 0x0000'0002,
+		StateMask_Pressed = 0x0000'0004,
+		StateMask_Activated = StateMask_Pressed,
+
+		//StateMask_Activated = 0x0000'0004,
 
 		StateMask_Value = 0xffff'ffff'0000'0000,
 		StateMask_FPValue = StateMask_Value,
@@ -387,7 +391,8 @@ namespace igui
 		NodeType m_type;
 		index_t m_index;
 
-		u64 m_state = StateMask_Enabled;
+		mutable u64 m_state = StateMask_Enabled;
+		
 		u32 m_flags = 0;
 		Rectf m_old_rect = { 0.f, 0.f, 32.f, 32.f };
 		Rectf m_rect = { 0.f, 0.f, 32.f, 32.f }; // <- relative rect to it's parent
