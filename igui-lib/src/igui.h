@@ -172,18 +172,31 @@ namespace igui
 	{
 		template <typename _T>
 		using optional = std::optional<_T>;
-		static constexpr auto novalue = std::nullopt_t( std::nullopt_t::_Tag() );
+		static constexpr std::nullopt_t novalue{ std::nullopt_t::_Tag() };
 
 		struct Shadow
 		{
-			optional<Vec2f> offset;
-			optional<Color> color;
+			inline Shadow() : offset{}, color{} {
+			}
+
+			inline Shadow( Vec2f poffset ) : offset{ poffset }, color{} {
+			}
+
+			inline Shadow( Color pcolor ) : offset{}, color{ pcolor } {
+			}
+
+			inline Shadow( Vec2f poffset, Color pcolor )
+				: offset{ poffset }, color{ pcolor } {
+			}
+
+			Vec2f offset;
+			Color color;
 		};
 
 		struct Boarder
 		{
 			float left = 0, top = 0, right = 0, bottom = 0;
-			optional<StyleElement> style = novalue;
+			StyleElement style = StyleElement();
 
 			inline Boarder() {
 			}
@@ -232,12 +245,12 @@ namespace igui
 									 Color( 0.94f, 0.94f, 0.94f ),   // fg
 									 Color( 0.14f, 0.24f, 0.44f ),   // hover
 									 Boarder( 2, Color( 0.4f, 0.4f, 0.4f ) ), // hover boarder
-									 novalue, // hover shadow
+									 Shadow(), // hover shadow
 									 Color( 0.24f, 0.44f, 0.84f ),   // pressed
 									 Boarder( 4, Color( 0.3f, 0.3f, 0.3f ) ), // pressed boarder
-									 novalue, // pressed shadow
+									 Shadow(), // pressed shadow
 									 Boarder( 2, Color( 0.2f, 0.2f, 0.2f ) ), // base boarder
-									 novalue // base shadow
+									 Shadow() // base shadow
 		};
 
 		Style panel;
@@ -392,7 +405,7 @@ namespace igui
 		index_t m_index;
 
 		mutable u64 m_state = StateMask_Enabled;
-		
+
 		u32 m_flags = 0;
 		Rectf m_old_rect = { 0.f, 0.f, 32.f, 32.f };
 		Rectf m_rect = { 0.f, 0.f, 32.f, 32.f }; // <- relative rect to it's parent
