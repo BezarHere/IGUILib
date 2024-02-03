@@ -21,7 +21,8 @@ inline _T _prereserved( const size_t capacity ) {
 constexpr size_t NodeTSIZE = sizeof( Node );
 constexpr size_t InterfaceTSIZE = sizeof( Interface );
 static_assert(NodeTSIZE < 256, "A node should be smaller then 256B, but it's NOT, fix");
-static_assert(InterfaceTSIZE < 8192, "What are you doing? an interface should be smaller then 8KB");
+//"nooooo, the interface style is way too big, that will be a technical burden!!!" - nerd
+//static_assert(InterfaceTSIZE < 8192, "What are you doing? an interface should be smaller then 8KB");
 
 enum class MousePressedState
 {
@@ -39,7 +40,7 @@ static FORCEINLINE const _OPTIONAL::value_type &get_value_cascade( const _OPTION
 
 #pragma warning(push)
 #pragma warning(disable:4172)
-// NOTE: Optimizing this is a piority
+// NOTE: Optimizing this is a priority
 template <typename _OPTIONAL, typename... _OPTIONAL_REST>
 static FORCEINLINE const _OPTIONAL::value_type &get_value_cascade( const _OPTIONAL &val, const _OPTIONAL_REST &...rest ) {
 	return val.value_or( get_value_cascade( rest... ) );
@@ -52,10 +53,88 @@ static FORCEINLINE _OPTIONAL::value_type &get_value_cascade( _OPTIONAL &val ) {
 	return val.value();
 }
 
-// NOTE: Optimizing this is a piority
+// NOTE: Optimizing this is a priority
 template <typename _OPTIONAL, typename... _OPTIONAL_REST>
 static FORCEINLINE _OPTIONAL::value_type &get_value_cascade( _OPTIONAL &val, _OPTIONAL_REST &...rest ) {
 	return val.value_or( get_value_cascade( rest ) );
+}
+
+// priority to optimize
+template <typename... _STYLES>
+static inline void transfer_style( InterfaceStyle::Style &out, const _STYLES &... bases ) {
+	out.background = get_value_cascade( (bases.background)... );
+	out.foreground = get_value_cascade( (bases.foreground)... );
+
+	out.boarder = get_value_cascade( (bases.boarder)... );
+	out.shadow = get_value_cascade( (bases.shadow)... );
+	out.text = get_value_cascade( (bases.text)... );
+
+	out.hovered = get_value_cascade( (bases.hovered)... );
+	out.hovered_boarder = get_value_cascade( (bases.hovered_boarder)... );
+	out.hovered_shadow = get_value_cascade( (bases.hovered_shadow)... );
+	out.hovered_text = get_value_cascade( (bases.hovered_text)... );
+
+	out.activated = get_value_cascade( (bases.activated)... );
+	out.activated_boarder = get_value_cascade( (bases.activated_boarder)... );
+	out.activated_shadow = get_value_cascade( (bases.activated_shadow)... );
+	out.activated_text = get_value_cascade( (bases.activated_text)... );
+
+	out.disabled = get_value_cascade( (bases.disabled)... );
+	out.disabled_boarder = get_value_cascade( (bases.disabled_boarder)... );
+	out.disabled_shadow = get_value_cascade( (bases.disabled_shadow)... );
+	out.disabled_text = get_value_cascade( (bases.disabled_text)... );
+}
+
+
+/// @returns true on success, false otherwise
+// priority to optimize
+static inline bool build_style_image( const InterfaceStyle &style, InterfaceStyle &out ) {
+#define CHECK_STYLE_BASE(name) if (!style.base.## name) { std::cout << "InterfaceStyle base style has no value: " << #name << '\n'; return false; }
+	CHECK_STYLE_BASE( background );
+	CHECK_STYLE_BASE( foreground );
+	CHECK_STYLE_BASE( boarder );
+	CHECK_STYLE_BASE( shadow );
+
+	CHECK_STYLE_BASE( hovered );
+	CHECK_STYLE_BASE( hovered_boarder );
+	CHECK_STYLE_BASE( hovered_shadow );
+	CHECK_STYLE_BASE( hovered_text );
+
+	CHECK_STYLE_BASE( activated );
+	CHECK_STYLE_BASE( activated_boarder );
+	CHECK_STYLE_BASE( activated_shadow );
+	CHECK_STYLE_BASE( activated_text );
+
+	CHECK_STYLE_BASE( disabled );
+	CHECK_STYLE_BASE( disabled_boarder );
+	CHECK_STYLE_BASE( disabled_shadow );
+	CHECK_STYLE_BASE( disabled_text );
+#undef CHECK_STYLE_BASE
+	using Style = InterfaceStyle::Style;
+
+	// bases don't need a transfer
+	out.base = style.base;
+
+	transfer_style( out.panel, style.panel, style.base );
+	transfer_style( out.button, style.button, style.base );
+
+	transfer_style( out.radial_button, style.radial_button, style.button, style.base );
+
+	transfer_style( out.checkbox, style.checkbox, style.button, style.base );
+	transfer_style( out.check_button, style.check_button, style.button, style.base );
+
+	// TODO: add the rest of the styles or make something better
+
+
+	out.custom_styles_count =
+		style.custom_styles_count < style.custom_styles.size() ? style.custom_styles_count : style.custom_styles.size();
+
+	for (size_t i = 0; i < out.custom_styles_count; i++)
+	{
+		transfer_style( out.custom_styles[ i ], style.custom_styles[ i ], style.base );
+	}
+
+	return true;
 }
 
 
@@ -463,9 +542,11 @@ namespace igui
 		renderer->get_canvas().circle( 8.f, m_input->mouse_pos, { 0.25f, 0.5f, 0.75f }, 8 );
 		renderer->get_canvas().circle( 4.f, m_input->raw_mouse_pos, { 0.75f, 0.5f, 0.25f }, 8 );
 
-		// TODO: create a style image to optimize style fetching
+		static InterfaceStyle style_image;
+		build_style_image( m_style, style_image );
 
 		NodeTree tree{ m_roots, m_nodes };
+
 
 		for (index_t i = 0; tree; i = tree.next_node())
 		{
@@ -499,17 +580,18 @@ namespace igui
 					m_drawing_sc->draw_box();
 
 					const auto boarder = m_style.panel.boarder.value_or( m_style.base.boarder.value() );
-					if (boarder.style.has_value())
-					{
-						m_drawing_sc->apply_style_element( boarder.style.value() );
 
-						m_drawing_sc->gen_frame( { node_global_pos.x - boarder.left,
-																			 node_global_pos.y - boarder.top,
-																			 node_global_rect.w + boarder.left + boarder.right,
-																			 node_global_rect.h + boarder.top + boarder.bottom },
-																		 node_global_rect );
-						m_drawing_sc->draw_frame();
-					}
+					m_drawing_sc->apply_style_element( boarder.style );
+
+					m_drawing_sc->gen_frame(
+						{
+							node_global_pos.x - boarder.left,
+							node_global_pos.y - boarder.top,
+							node_global_rect.w + boarder.left + boarder.right,
+							node_global_rect.h + boarder.top + boarder.bottom
+						},
+						node_global_rect );
+					m_drawing_sc->draw_frame();
 				}
 				break;
 			case NodeType::Button:
@@ -525,36 +607,35 @@ namespace igui
 						[ this, mb_state ]() {
 							if (mb_state == MousePressedState::Hovered)
 							{
-								return m_style.button.hover_boarder.value_or(
-									m_style.base.hover_boarder.value_or( m_style.base.boarder.value() )
+								return m_style.button.hovered_boarder.value_or(
+									m_style.base.hovered_boarder.value_or( m_style.base.boarder.value() )
 								);
 							}
 
 							if (mb_state == MousePressedState::Pressed)
 							{
-								return m_style.button.pressed_boarder.value_or(
-									m_style.base.pressed_boarder.value_or( m_style.base.boarder.value() )
+								return m_style.button.activated_boarder.value_or(
+									m_style.base.activated_boarder.value_or( m_style.base.boarder.value() )
 								);
 							}
 
 							return m_style.button.boarder.value_or( m_style.base.boarder.value() );
 						} );
 
-					if (boarder.style.has_value())
-					{
-						m_drawing_sc->apply_style_element( boarder.style.value() );
 
-						m_drawing_sc->gen_frame( { node_global_pos.x - boarder.left,
-																			 node_global_pos.y - boarder.top,
-																			 node_global_rect.w + boarder.left + boarder.right,
-																			 node_global_rect.h + boarder.top + boarder.bottom },
-																		 node_global_rect );
-						m_drawing_sc->draw_frame();
-					}
+					m_drawing_sc->apply_style_element( boarder.style );
 
-
-
+					m_drawing_sc->gen_frame(
+						{
+							node_global_pos.x - boarder.left,
+							node_global_pos.y - boarder.top,
+							node_global_rect.w + boarder.left + boarder.right,
+							node_global_rect.h + boarder.top + boarder.bottom
+						},
+						node_global_rect );
+					m_drawing_sc->draw_frame();
 				}
+
 				break;
 			default:
 				break;

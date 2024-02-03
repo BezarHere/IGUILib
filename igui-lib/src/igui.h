@@ -46,6 +46,7 @@ namespace igui
 	using Color = ig::Colorf;
 
 	using Texture = ig::Texture;
+	using Font = ig::Font;
 
 	using Window = ig::Window;
 	using Renderer = ig::Renderer;
@@ -173,6 +174,26 @@ namespace igui
 		template <typename _T>
 		using optional = std::optional<_T>;
 		static constexpr std::nullopt_t novalue{ std::nullopt_t::_Tag() };
+		// why is this fixed? idk, a bad decision for later
+		static constexpr size_t max_custom_styles = 64;
+
+		struct Text
+		{
+			inline Text() : color{ 1.f, 1.f, 1.f }, font{} {
+			}
+
+			inline Text( Color pcolor ) : color{ pcolor }, font{} {
+			}
+
+			inline Text( const Font *pfont ) : color{ 1.f, 1.f, 1.f }, font{ pfont } {
+			}
+
+			inline Text( Color pcolor, const Font *pfont ) : color{ pcolor }, font{ pfont } {
+			}
+
+			Color color;
+			const Font *font;
+		};
 
 		struct Shadow
 		{
@@ -222,35 +243,56 @@ namespace igui
 
 		};
 
+		// TODO: organize more...
 		struct Style
 		{
 			optional<StyleElement> background = novalue;
 			optional<StyleElement> foreground = novalue;
-
-			optional<StyleElement> hover = novalue; // fallback to background
-			optional<Boarder> hover_boarder = novalue;  // fallback to boarder
-			optional<Shadow> hover_shadow = novalue; // fallback to shadow
-
-			optional<StyleElement> pressed = novalue; // fallback to background
-			optional<Boarder> pressed_boarder = novalue;  // fallback to boarder
-			optional<Shadow> pressed_shadow = novalue; // fallback to shadow
-
 			optional<Boarder> boarder = novalue;
 			optional<Shadow> shadow = novalue;
+			optional<Text> text = novalue;
+
+			optional<StyleElement> hovered = novalue; // fallback to background
+			optional<Boarder> hovered_boarder = novalue;  // fallback to boarder
+			optional<Shadow> hovered_shadow = novalue; // fallback to shadow
+			optional<Text> hovered_text = novalue; // fallback to text
+
+			optional<StyleElement> activated = novalue; // fallback to background
+			optional<Boarder> activated_boarder = novalue;  // fallback to boarder
+			optional<Shadow> activated_shadow = novalue; // fallback to shadow
+			optional<Text> activated_text = novalue; // fallback to text
+
+			optional<StyleElement> disabled = novalue; // fallback to background
+			optional<Boarder> disabled_boarder = novalue;  // fallback to boarder
+			optional<Shadow> disabled_shadow = novalue; // fallback to shadow
+			optional<Text> disabled_text = novalue; // fallback to text
 		};
+
+		using StyleArray = std::array<Style, max_custom_styles>;
 
 		// base field's values should always exist
 		// FIXME: how it's constructed is unreliable and buggy
-		Style base = { Color( 0.14f, 0.14f, 0.14f ),   // bg
-									 Color( 0.94f, 0.94f, 0.94f ),   // fg
-									 Color( 0.14f, 0.24f, 0.44f ),   // hover
-									 Boarder( 2, Color( 0.4f, 0.4f, 0.4f ) ), // hover boarder
-									 Shadow(), // hover shadow
-									 Color( 0.24f, 0.44f, 0.84f ),   // pressed
-									 Boarder( 4, Color( 0.3f, 0.3f, 0.3f ) ), // pressed boarder
-									 Shadow(), // pressed shadow
-									 Boarder( 2, Color( 0.2f, 0.2f, 0.2f ) ), // base boarder
-									 Shadow() // base shadow
+		Style base = {
+			Color( 0.14f, 0.14f, 0.14f ),   // bg
+			Color( 0.94f, 0.94f, 0.94f ),   // fg
+			Boarder( 2, Color( 0.2f, 0.2f, 0.2f ) ), // base boarder
+			Shadow(), // base shadow
+			Text( Color( 0.9f, 0.9f, 0.9f ) ), // text
+
+			Color( 0.14f, 0.24f, 0.44f ),   // hovered
+			Boarder( 2, Color( 0.4f, 0.4f, 0.4f ) ), // hovered boarder
+			Shadow(), // hovered shadow
+			Text(), // hovered text
+			
+			Color( 0.24f, 0.44f, 0.84f ),   // activated
+			Boarder( 4, Color( 0.3f, 0.3f, 0.3f ) ), // activated boarder
+			Shadow(), // activated shadow
+			Text(), // activated text
+
+			Color( 0.12f, 0.07f, 0.04f ),   // disabled
+			Boarder( 0, Color() ), // disabled boarder
+			Shadow(), // disabled shadow
+			Text(), // disabled text
 		};
 
 		Style panel;
@@ -267,6 +309,9 @@ namespace igui
 
 		Style vertical_progress_bar;
 		Style horizontal_progress_bar;
+
+		StyleArray custom_styles;
+		size_t custom_styles_count = 0;
 	};
 
 	class Interface
