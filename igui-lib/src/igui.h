@@ -110,8 +110,13 @@ namespace igui
 
 	enum class MouseFilter : i16
 	{
+		// stops the mouse input after receiving it
 		Stop,
+		// detects the mouse, but passes the mouse event only to children (non-recursive)
+		Children,
+		// detects the mouse, but doesn't catch any input, letting it propagate
 		Through,
+		// ignores the mouse all together
 		Ignore
 	};
 
@@ -283,7 +288,7 @@ namespace igui
 			Boarder( 2, Color( 0.4f, 0.4f, 0.4f ) ), // hovered boarder
 			Shadow(), // hovered shadow
 			Text(), // hovered text
-			
+
 			Color( 0.24f, 0.44f, 0.84f ),   // activated
 			Boarder( 4, Color( 0.3f, 0.3f, 0.3f ) ), // activated boarder
 			Shadow(), // activated shadow
