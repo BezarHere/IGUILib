@@ -134,6 +134,8 @@ public:
 		index_t next_node;
 		Vec2f position; // <- global position
 		Color modulate;
+		uint16_t flags; // <- inherited
+		uint16_t own_flags; // <- NOT inherited
 	};
 
 	inline NodeTree( const Interface::nodes_indices &roots, const Interface::nodes_collection &nodes )
@@ -156,8 +158,8 @@ public:
 		return &m_connections.back();
 	}
 
+	// this function must not be called with no nodes
 	inline index_t next_node() {
-		// this function must not be called with no nodes
 
 		const index_t node_index = m_nodes.back();
 		m_nodes.pop_back();
@@ -180,7 +182,8 @@ public:
 				// add a new connection
 				m_connections.emplace_back( next_node_index,
 																		Vec2f( node.m_rect.x, node.m_rect.y ),
-																		Color( 1.f, 1.f, 1.f, 1.f ) );
+																		Color( 1.f, 1.f, 1.f, 1.f ),
+																		m_connections.empty() ? 0 : m_connections.back().flags );
 			}
 
 
@@ -342,7 +345,7 @@ public:
 		m_values[ static_cast<size_t>(key) + key_offset ].handled = true;
 		m_handled_input.push_back( static_cast<size_t>(key) + key_offset );
 	}
-	
+
 
 	inline bool is_handled( const MouseButton button ) {
 		return m_values[ static_cast<size_t>(button) + mbutton_offset ].handled;
