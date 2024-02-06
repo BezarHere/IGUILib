@@ -21,6 +21,12 @@ enum class InputActionState
 	Up = Deactivated,
 };
 
+enum class MouseCapturedState
+{
+	Free,
+	CapturedToFamily,
+	Captured,
+};
 
 template <typename _OPTIONAL>
 static FORCEINLINE const _OPTIONAL::value_type &get_value_cascade( const _OPTIONAL &val ) {
@@ -125,6 +131,20 @@ static inline bool build_style_image( const InterfaceStyle &style, InterfaceStyl
 	return true;
 }
 
+// HNF
+enum HierarchyNodeFlags : uint16_t
+{
+	HNodeFlag_None = 0x0000,
+	HNodeFlag_CapturedMouse = 0x0001,
+};
+
+// NHNF
+enum NonHierarchyNodeFlags : uint16_t
+{
+	NHNodeFlag_None = 0x0000,
+
+};
+
 
 class Interface::NodeTree
 {
@@ -134,8 +154,8 @@ public:
 		index_t next_node;
 		Vec2f position; // <- global position
 		Color modulate;
-		uint16_t flags; // <- inherited
-		uint16_t own_flags; // <- NOT inherited
+		HierarchyNodeFlags flags; // <- inherited
+		NonHierarchyNodeFlags own_flags; // <- NOT inherited
 	};
 
 	inline NodeTree( const Interface::nodes_indices &roots, const Interface::nodes_collection &nodes )
@@ -187,16 +207,20 @@ public:
 			else
 			{
 				// add a new connection
-				m_connections.emplace_back( next_node_index,
-																		Vec2f( node.m_rect.x, node.m_rect.y ),
-																		Color( 1.f, 1.f, 1.f, 1.f ),
-																		m_connections.empty() ? 0 : m_connections.back().flags );
+				m_connections.emplace_back(
+					next_node_index,
+					Vec2f( node.m_rect.x, node.m_rect.y ),
+					Color( 1.f, 1.f, 1.f, 1.f ),
+					m_connections.empty() ? HierarchyNodeFlags::HNodeFlag_None : m_connections.back().flags
+				);
 			}
 
 
-			for (index_t k : node.m_children)
+			
+
+			for (nodes_indices::const_reverse_iterator E = node.m_children.rbegin(); E != node.m_children.rend(); E++)
 			{
-				m_nodes.push_back( k );
+				m_nodes.push_back( *E );
 			}
 		}
 		// no children to add means that the next node is exposed
@@ -320,7 +344,7 @@ public:
 		}
 
 		return m_values[ static_cast<size_t>(button) + mbutton_offset ].update_tick == m_tick ?
-			InputActionState::Deactivated : InputActionState::Hovered;
+			InputActionState::Deactivated : InputActionState::None;
 	}
 
 	inline InputActionState get_action_state( const KeyCode key ) const {
@@ -330,7 +354,7 @@ public:
 		}
 
 		return m_values[ static_cast<size_t>(key) + key_offset ].update_tick == m_tick ?
-			InputActionState::Deactivated : InputActionState::Hovered;
+			InputActionState::Deactivated : InputActionState::None;
 	}
 
 	inline void mark_as_handled( const MouseButton button ) {
@@ -586,6 +610,9 @@ namespace igui
 				const float width_dt = node.m_rect.w - node.m_old_rect.w;
 				const float height_dt = node.m_rect.h - node.m_old_rect.h;
 
+				// TODO: skip this if the node has a layout, and order acording to the layout
+
+
 				Rectf anchors;
 				for (index_t k : node.m_children)
 				{
@@ -608,7 +635,8 @@ namespace igui
 
 	void Interface::draw( Renderer *renderer ) const {
 		using ParentNodeConnection = NodeTree::ParentNodeConnection;
-		static const ParentNodeConnection DefaultPNC = { 0 };
+		static const ParentNodeConnection DefaultCPNC = { 0 };
+		static ParentNodeConnection DefaultPNC = { 0 };
 
 		if (!m_drawing_sc)
 		{
@@ -631,26 +659,62 @@ namespace igui
 
 		const InterfaceStyle &style_image = m_style_data->get_image();
 
+		MouseCapturedState mouse_captured = MouseCapturedState::Free;
 		NodeTree tree{ m_roots, m_nodes };
 		index_t last_node = npos;
+
+		/*
+		FIXME: draw order is fine but update order is not workable
+
+		updating/capturing inputs should be reverse order of drawing (children -> parents)
+		drawing should be for children last to render them on top of parent (parents -> children)
+		or reverse the depth test or some shit, just fix this mess
+		*/
 
 		for (index_t i = 0; tree; i = tree.next_node())
 		{
 			const Node &node = m_nodes[ i ];
-			const ParentNodeConnection *con = ([]( const ParentNodeConnection *c ) { return c ? c : &DefaultPNC; })(tree.get_connection());
+			const ParentNodeConnection *con = ([]( const ParentNodeConnection *c ) { return c ? c : &DefaultCPNC; })(tree.get_connection());
 
 			const Vec2f node_global_pos = { con->position.x + node.m_rect.x, con->position.y + node.m_rect.y };
 			const Rectf node_global_rect = { node_global_pos.x, node_global_pos.y, node.m_rect.w, node.m_rect.h };
-			const bool mouse_inside = node_global_rect.contains( m_input->mouse_pos );
 
 
-			const InputActionState mb_state = mouse_inside ?
-				(m_input->get_action_state( node.m_trigger_button )) : InputActionState::None;
+			const bool mouse_available =
+				node.m_mouse_filter != MouseFilter::Ignore &&
+				mouse_captured == MouseCapturedState::Free ||
+				(mouse_captured == MouseCapturedState::CapturedToFamily && con->flags & HierarchyNodeFlags::HNodeFlag_CapturedMouse);
 
-			node.m_state =
-				(node.m_state & ~(StateMask_Hovered | StateMask_Pressed)) |
-				(mouse_inside ? 0 : StateMask_Hovered) |
-				(mb_state == InputActionState::Actived ? 0 : StateMask_Pressed);
+			if (mouse_available)
+			{
+				if (node.m_mouse_filter == MouseFilter::Stop)
+				{
+					mouse_captured = MouseCapturedState::Captured;
+				}
+				else if (mouse_captured != MouseCapturedState::CapturedToFamily && node.m_mouse_filter == MouseFilter::Children)
+				{
+					mouse_captured = MouseCapturedState::CapturedToFamily;
+				}
+			}
+
+			const bool hovered = mouse_available && node_global_rect.contains( m_input->mouse_pos );
+
+			// crappy
+			const InputActionState _ics = m_input->get_action_state( node.m_trigger_button );
+			const InputActionState mb_state = hovered ?
+				(_ics == InputActionState::None ? InputActionState::Hovered : _ics) : InputActionState::None;
+
+			node.m_state &= ~(StateMask_Hovered | StateMask_Pressed);
+			if (hovered)
+			{
+				node.m_state |= StateMask_Hovered;
+			}
+
+			// can be but in if (hovered) but nesting is yucky
+			if (mb_state == InputActionState::Actived)
+			{
+				node.m_state |= StateMask_Pressed;
+			}
 
 			// drawing the node
 			switch (node.m_type)
@@ -735,8 +799,13 @@ namespace igui
 		if (node.m_parent != InvalidIndex || !node.m_children.empty())
 			return InvalidIndex;
 
+
 		const size_t node_index = m_nodes.size();
 		m_nodes.push_back( node );
+
+		// the node's rect should be clean
+		m_nodes[ node_index ].m_rect_dirty = false;
+		m_nodes[ node_index ].m_old_rect = m_nodes[ node_index ].m_rect;
 
 		if (parent == InvalidIndex)
 		{
@@ -958,12 +1027,37 @@ namespace igui
 			m_rect_dirty = true;
 	}
 
-	void Node::set_rect( Rectf rect ) {
+	void Node::set_rect( const Rectf &rect ) {
 		m_rect = rect;
 
 		if (!m_rect_dirty)
 			m_rect_dirty = true;
 	}
+
+	void Node::set_anchors( const Rectf &anchros ) {
+		m_anchors = anchros;
+	}
+
+	void Node::set_anchors( float left, float right, float top, float bottom ) {
+		m_anchors.x = left;
+		m_anchors.y = top;
+		m_anchors.w = right - left;
+		m_anchors.h = bottom - top;
+	}
+
+	void Node::set_mouse_filter( MouseFilter filter ) {
+		m_mouse_filter = filter;
+	}
+
+	void Node::set_pivot( Vec2f pivot ) {
+		m_pivot = pivot;
+	}
+
+	void Node::set_angle( float angle ) {
+		m_angle = angle;
+	}
+
+
 
 }
 
