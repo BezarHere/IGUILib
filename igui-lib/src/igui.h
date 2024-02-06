@@ -501,12 +501,13 @@ namespace igui
 	}
 
 	inline i32 Node::value() const noexcept {
-		return m_state & StateMask_Value;
+		return (m_state & StateMask_Value) >> 32;
 	}
 
 	inline float Node::value_fp() const noexcept {
 		const i32 val = value();
-		return *reinterpret_cast<const float *>(&val); // <- it works
+		// kind hacky but it should work...
+		return *reinterpret_cast<const float *>(&val);
 	}
 
 }
