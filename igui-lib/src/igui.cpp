@@ -11,13 +11,6 @@ template <size_t _SZ>
 using Vertex2Array = ig::BaseVertexArray<ig::Vertex2, stacklist<ig::Vertex2, _SZ>>;
 #endif
 
-template <typename _T>
-inline _T _prereserved( const size_t capacity ) {
-	_T p;
-	p.reserve( capacity );
-	return p;
-}
-
 enum class InputActionState
 {
 	None = 0,
