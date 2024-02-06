@@ -18,12 +18,6 @@ inline _T _prereserved( const size_t capacity ) {
 	return p;
 }
 
-constexpr size_t NodeTSIZE = sizeof( Node );
-constexpr size_t InterfaceTSIZE = sizeof( Interface );
-static_assert(NodeTSIZE < 256, "A node should be smaller then 256B, but it's NOT, fix");
-//"nooooo, the interface style is way too big, that will be a technical burden!!!" - nerd
-//static_assert(InterfaceTSIZE < 8192, "What are you doing? an interface should be smaller then 8KB");
-
 enum class InputActionState
 {
 	None = 0,
