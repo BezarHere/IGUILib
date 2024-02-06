@@ -427,7 +427,12 @@ namespace igui
 		void set_position( Vec2f pos );
 		void set_size( Vec2f size );
 		void set_rect( Vec2f pos, Vec2f size );
-		void set_rect( Rectf rect );
+		void set_rect( const Rectf &rect );
+		void set_anchors( const Rectf &anchors );
+		void set_anchors( float left, float right, float top, float bottom );
+		void set_mouse_filter( MouseFilter filter );
+		void set_pivot( Vec2f pivot );
+		void set_angle( float angle );
 
 		inline Vec2f get_position() const noexcept {
 			return { m_rect.x, m_rect.y };
@@ -439,6 +444,18 @@ namespace igui
 
 		inline const Rectf &get_rect() const noexcept {
 			return m_rect;
+		}
+
+		inline const Rectf &get_anchors() const noexcept {
+			return m_anchors;
+		}
+
+		inline Vec2f get_pivot() const noexcept {
+			return m_pivot;
+		}
+
+		inline float get_angle() const noexcept {
+			return m_angle;
 		}
 
 		inline index_t index() const noexcept {
@@ -454,6 +471,9 @@ namespace igui
 			return m_signal_proc;
 		}
 
+		inline MouseFilter get_mouse_filter() const noexcept {
+			return m_mouse_filter;
+		}
 
 	private:
 		NodeType m_type;
@@ -465,7 +485,7 @@ namespace igui
 		Rectf m_old_rect = { 0.f, 0.f, 32.f, 32.f };
 		Rectf m_rect = { 0.f, 0.f, 32.f, 32.f }; // <- relative rect to it's parent
 		bool m_rect_dirty = false;
-		Rectf m_anchors = { 0.f, 0.f, 1.f, 1.f };
+		Rectf m_anchors = { 0.f, 0.f, 0.f, 0.f };
 		Vec2f m_pivot = { 0.f, 0.f };
 		float m_angle = 0.0f;
 
