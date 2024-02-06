@@ -24,12 +24,14 @@ static_assert(NodeTSIZE < 256, "A node should be smaller then 256B, but it's NOT
 //"nooooo, the interface style is way too big, that will be a technical burden!!!" - nerd
 //static_assert(InterfaceTSIZE < 8192, "What are you doing? an interface should be smaller then 8KB");
 
-enum class MousePressedState
+enum class InputActionState
 {
 	None = 0,
 	Hovered,
-	Pressed,
-	Released
+	Actived,
+	Down = Actived,
+	Deactivated,
+	Up = Deactivated,
 };
 
 
@@ -124,7 +126,6 @@ static inline bool build_style_image( const InterfaceStyle &style, InterfaceStyl
 	transfer_style( out.check_button, style.check_button, style.button, style.base );
 
 	// TODO: add the rest of the styles or make something better
-
 
 	out.custom_styles_count =
 		style.custom_styles_count < style.custom_styles.size() ? style.custom_styles_count : style.custom_styles.size();
@@ -244,6 +245,7 @@ public:
 
 		} state;
 		index_t update_tick;
+		bool handled = false;
 	};
 
 	inline InputRecord() : m_tick{ 0 } {
@@ -314,22 +316,108 @@ public:
 		return m_values[ static_cast<size_t>(button) + mbutton_offset ].update_tick == m_tick && m_values[ static_cast<size_t>(button) + mbutton_offset ].state.active;
 	}
 
-	inline MousePressedState get_mouse_pressed_state( const MouseButton button ) const {
+	inline InputActionState get_action_state( const MouseButton button ) const {
 		if (m_values[ static_cast<size_t>(button) + mbutton_offset ].state.active)
 		{
-			return MousePressedState::Pressed;
+			return InputActionState::Actived;
 		}
 
 		return m_values[ static_cast<size_t>(button) + mbutton_offset ].update_tick == m_tick ?
-			MousePressedState::Released : MousePressedState::Hovered;
+			InputActionState::Deactivated : InputActionState::Hovered;
 	}
 
+	inline InputActionState get_action_state( const KeyCode key ) const {
+		if (m_values[ static_cast<size_t>(key) + key_offset ].state.active)
+		{
+			return InputActionState::Actived;
+		}
+
+		return m_values[ static_cast<size_t>(key) + key_offset ].update_tick == m_tick ?
+			InputActionState::Deactivated : InputActionState::Hovered;
+	}
+
+	inline void mark_as_handled( const MouseButton button ) {
+		if (m_values[ static_cast<size_t>(button) + mbutton_offset ].handled)
+		{
+			return;
+		}
+
+		m_values[ static_cast<size_t>(button) + mbutton_offset ].handled = true;
+		m_handled_input.push_back( static_cast<size_t>(button) + mbutton_offset );
+	}
+
+	inline void mark_as_handled( const KeyCode key ) {
+		if (m_values[ static_cast<size_t>(key) + key_offset ].handled)
+		{
+			return;
+		}
+
+		m_values[ static_cast<size_t>(key) + key_offset ].handled = true;
+		m_handled_input.push_back( static_cast<size_t>(key) + key_offset );
+	}
+	
+
+	inline bool is_handled( const MouseButton button ) {
+		return m_values[ static_cast<size_t>(button) + mbutton_offset ].handled;
+	}
+
+	inline bool is_handled( const KeyCode key ) {
+		return m_values[ static_cast<size_t>(key) + key_offset ].handled;
+	}
+
+	inline void clear_handled_inputs() {
+		for (const index_t input_index : m_handled_input)
+		{
+			m_values[ input_index ].handled = false;
+		}
+		m_handled_input.clear();
+	}
 
 	Vec2f mouse_pos = {}; // transformed
 	Vec2f raw_mouse_pos = {}; // raw
 private:
-	size_t m_tick;
+	size_t m_tick = 0;
 	stacklist<InputValue, RecordSize> m_values;
+	stacklist<index_t, RecordSize> m_handled_input;
+};
+
+class Interface::StyleData
+{
+public:
+
+	/// @returns true on success, otherwise false
+	inline bool invalidate_image() const {
+#ifdef _DEBUG
+		m_image_invalidation_count++;
+#endif // _DEBUG
+		return build_style_image( m_style, m_image );
+	}
+
+	inline InterfaceStyle &get_style() noexcept {
+		m_dirty_image = true;
+		return m_style;
+	}
+
+	inline const InterfaceStyle &get_style() const noexcept {
+		return m_style;
+	}
+
+	inline const InterfaceStyle &get_image() const noexcept {
+		if (m_dirty_image)
+		{
+			invalidate_image();
+			m_dirty_image = false;
+		}
+		return m_image;
+	}
+
+
+private:
+	InterfaceStyle m_style;
+
+	mutable size_t m_image_invalidation_count = 0;
+	mutable bool m_dirty_image = true;
+	mutable InterfaceStyle m_image;
 };
 
 namespace igui
@@ -466,7 +554,9 @@ namespace igui
 	}
 
 	Interface::Interface()
-		: m_drawing_sc{ nullptr }, m_ticks{ 0 }, m_input{ new InputRecord() } {
+		: m_drawing_sc{ nullptr }, m_ticks{ 0 },
+		m_input{ new InputRecord() }, m_style_data{ new StyleData() } {
+
 		// ignore this
 		constexpr size_t DrawingStateCacheSIZE = sizeof( DrawingStateCache );
 		constexpr size_t SPDrawingStateCacheSIZE = sizeof( Interface::SPDrawingStateCache );
@@ -542,44 +632,40 @@ namespace igui
 		renderer->get_canvas().circle( 8.f, m_input->mouse_pos, { 0.25f, 0.5f, 0.75f }, 8 );
 		renderer->get_canvas().circle( 4.f, m_input->raw_mouse_pos, { 0.75f, 0.5f, 0.25f }, 8 );
 
-		static InterfaceStyle style_image;
-		build_style_image( m_style, style_image );
+		const InterfaceStyle &style_image = m_style_data->get_image();
 
 		NodeTree tree{ m_roots, m_nodes };
-
+		index_t last_node = npos;
 
 		for (index_t i = 0; tree; i = tree.next_node())
 		{
 			const Node &node = m_nodes[ i ];
 			const ParentNodeConnection *con = ([]( const ParentNodeConnection *c ) { return c ? c : &DefaultPNC; })(tree.get_connection());
 
-			// trash, all trash
 			const Vec2f node_global_pos = { con->position.x + node.m_rect.x, con->position.y + node.m_rect.y };
 			const Rectf node_global_rect = { node_global_pos.x, node_global_pos.y, node.m_rect.w, node.m_rect.h };
 			const bool mouse_inside = node_global_rect.contains( m_input->mouse_pos );
 
 
-			const MousePressedState mb_state = mouse_inside ?
-				(m_input->get_mouse_pressed_state( node.m_trigger_button )) : MousePressedState::None;
+			const InputActionState mb_state = mouse_inside ?
+				(m_input->get_action_state( node.m_trigger_button )) : InputActionState::None;
 
 			node.m_state =
 				(node.m_state & ~(StateMask_Hovered | StateMask_Pressed)) |
 				(mouse_inside ? 0 : StateMask_Hovered) |
-				(mb_state == MousePressedState::Pressed ? 0 : StateMask_Pressed);
+				(mb_state == InputActionState::Actived ? 0 : StateMask_Pressed);
 
 			// drawing the node
 			switch (node.m_type)
 			{
 			case NodeType::Panel:
 				{
-					m_drawing_sc->apply_style_element(
-						m_style.panel.background.value_or( m_style.base.background.value() )
-					);
+					m_drawing_sc->apply_style_element( style_image.panel.background.value() );
 
 					m_drawing_sc->gen_box( node_global_pos.x, node_global_pos.y, node_global_rect.w, node_global_rect.h );
 					m_drawing_sc->draw_box();
 
-					const auto boarder = m_style.panel.boarder.value_or( m_style.base.boarder.value() );
+					const auto boarder = style_image.panel.boarder.value();
 
 					m_drawing_sc->apply_style_element( boarder.style );
 
@@ -596,30 +682,24 @@ namespace igui
 				break;
 			case NodeType::Button:
 				{
-					m_drawing_sc->apply_style_element(
-						get_value_cascade( m_style.button.background, m_style.base.background )
-					);
+					m_drawing_sc->apply_style_element( style_image.button.background.value() );
 
 					m_drawing_sc->gen_box( node_global_pos.x, node_global_pos.y, node_global_rect.w, node_global_rect.h );
 					m_drawing_sc->draw_box();
 
 					const InterfaceStyle::Boarder &boarder = std::invoke(
-						[ this, mb_state ]() {
-							if (mb_state == MousePressedState::Hovered)
+						[ &style_image, mb_state ]() {
+							if (mb_state == InputActionState::Hovered)
 							{
-								return m_style.button.hovered_boarder.value_or(
-									m_style.base.hovered_boarder.value_or( m_style.base.boarder.value() )
-								);
+								return style_image.button.hovered_boarder.value();
 							}
 
-							if (mb_state == MousePressedState::Pressed)
+							if (mb_state == InputActionState::Actived)
 							{
-								return m_style.button.activated_boarder.value_or(
-									m_style.base.activated_boarder.value_or( m_style.base.boarder.value() )
-								);
+								return style_image.button.activated_boarder.value();
 							}
 
-							return m_style.button.boarder.value_or( m_style.base.boarder.value() );
+							return style_image.button.boarder.value();
 						} );
 
 
@@ -641,7 +721,9 @@ namespace igui
 				break;
 			}
 
+			// loop tail:
 
+			last_node = i;
 		}
 
 

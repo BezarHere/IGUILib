@@ -175,7 +175,7 @@ namespace igui
 		using optional = std::optional<_T>;
 		static constexpr std::nullopt_t novalue{ std::nullopt_t::_Tag() };
 		// why is this fixed? idk, a bad decision for later
-		static constexpr size_t max_custom_styles = 64;
+		static constexpr size_t max_custom_styles = 256;
 
 		struct Text
 		{
@@ -327,6 +327,10 @@ namespace igui
 		~Interface();
 
 		void update();
+
+		/// @brief draws the interface
+		/// @param renderer the iglib renderer
+		/// @note should be called from the rendering callback
 		void draw( Renderer *renderer ) const;
 
 		void input( InputEvent event );
@@ -374,6 +378,7 @@ namespace igui
 	private:
 		class NodeTree;
 		class InputRecord;
+		class StyleData;
 		// internal structure
 		struct SPDrawingStateCache
 		{
@@ -385,7 +390,7 @@ namespace igui
 		size_t m_ticks;
 		nodes_collection m_nodes;
 		nodes_indices m_roots;
-		InterfaceStyle m_style;
+		std::unique_ptr<StyleData> m_style_data;
 		std::unique_ptr<InputRecord> m_input;
 		mutable SPDrawingStateCache m_sp_drawing_sc;
 		mutable DrawingStateCache *m_drawing_sc;
