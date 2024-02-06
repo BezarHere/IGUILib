@@ -151,6 +151,13 @@ public:
 		return !m_nodes.empty();
 	}
 
+	inline ParentNodeConnection *get_connection() {
+		if (m_connections.empty())
+			return nullptr;
+
+		return &m_connections.back();
+	}
+
 	inline const ParentNodeConnection *get_connection() const {
 		if (m_connections.empty())
 			return nullptr;
