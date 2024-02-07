@@ -84,10 +84,8 @@ namespace igui
 		DropdownOption, // <- dropdown selection
 
 		// ranges
-		HSlider,
-		VSlider,
-		HProgressBar,
-		VProgressBar,
+		Slider,
+		ProgressBar,
 
 		Sprite,
 		Line,
