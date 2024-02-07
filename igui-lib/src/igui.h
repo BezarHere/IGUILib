@@ -139,6 +139,45 @@ namespace igui
 		SizeFlags_End = 0x0004,
 	};
 
+	enum class LayoutType
+	{
+		None = 0,
+		HFlex,
+		VFlex,
+		Grid,
+		Centered
+	};
+
+	struct Boxf
+	{
+		inline Boxf()
+			: left{ 0.f }, right{ 0.f }, top{ 0.f }, bottom{ 0.f } {
+		}
+
+		inline Boxf( float l, float r, float t, float b )
+			: left{ l }, right{ r }, top{ t }, bottom{ b } {
+		}
+
+		inline Boxf( const Rectf &rect )
+			: left{ rect.x }, right{ rect.x + rect.w },
+			top{ rect.y }, bottom{ rect.y + rect.h } {
+		}
+
+		inline Boxf &operator=( const Rectf &rect ) {
+			left = rect.x;
+			right = rect.x + rect.w;
+			top = rect.y;
+			bottom = rect.y + rect.h;
+			return *this;
+		}
+
+		inline Rectf rect() const noexcept {
+			return { left, top, right - left, bottom - top };
+		}
+
+		float left, right, top, bottom;
+	};
+
 	struct StyleElement
 	{
 		inline constexpr StyleElement() : color{ 1.f, 1.f, 1.f }, texture{ nullptr } {
@@ -426,7 +465,7 @@ namespace igui
 		inline const vector<index_t> &get_children() const noexcept {
 			return m_children;
 		}
-		
+
 		void disable();
 		void enable();
 		void hide();
@@ -436,7 +475,7 @@ namespace igui
 		void set_size( Vec2f size );
 		void set_rect( Vec2f pos, Vec2f size );
 		void set_rect( const Rectf &rect );
-		void set_anchors( const Rectf &anchors );
+		void set_anchors( const Boxf &anchors );
 		void set_anchors( float left, float right, float top, float bottom );
 		void set_mouse_filter( MouseFilter filter );
 		void set_pivot( Vec2f pivot );
@@ -454,7 +493,7 @@ namespace igui
 			return m_rect;
 		}
 
-		inline const Rectf &get_anchors() const noexcept {
+		inline const Boxf &get_anchors() const noexcept {
 			return m_anchors;
 		}
 
@@ -502,12 +541,19 @@ namespace igui
 		mutable u64 m_state = StateMask_Enabled;
 
 		u32 m_flags = 0;
+
 		Rectf m_old_rect = { 0.f, 0.f, 32.f, 32.f };
 		Rectf m_rect = { 0.f, 0.f, 32.f, 32.f }; // <- relative rect to it's parent
+		Rectf m_rect_min_size = { 0.f, 0.f, 0.f, 0.f };
 		bool m_rect_dirty = false;
-		Rectf m_anchors = { 0.f, 0.f, 0.f, 0.f };
+
+		Boxf m_anchors = { 0.f, 0.f, 0.f, 0.f };
+
 		Vec2f m_pivot = { 0.f, 0.f };
 		float m_angle = 0.0f;
+
+		Boxf m_padding = { 0.f, 0.f, 0.f, 0.f };
+		Boxf m_margin = { 0.f, 0.f, 0.f, 0.f };
 
 		MouseFilter m_mouse_filter = MouseFilter::Stop;
 		CursorShape m_cursor_shape = CursorShape::Arrow;
@@ -523,6 +569,20 @@ namespace igui
 			SizeFlags horizontal = SizeFlags_None;
 			SizeFlags vertical = SizeFlags_None;
 		} m_size_flags;
+
+		struct Layout
+		{
+			LayoutType type;
+
+			union LayoutPadding
+			{
+				float padding;
+				struct {
+					float vpadding, hpadding;
+				};
+			};
+
+		} m_layout;
 
 		NodeSignalProc m_signal_proc = nullptr;
 
