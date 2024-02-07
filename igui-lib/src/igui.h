@@ -133,7 +133,10 @@ namespace igui
 
 	enum SizeFlags : i16
 	{
-		SizeFlags_None = 0
+		SizeFlags_None = 0x0000,
+		SizeFlags_Expand = 0x0001,
+		SizeFlags_Fill = 0x0002,
+		SizeFlags_End = 0x0004,
 	};
 
 	struct StyleElement
