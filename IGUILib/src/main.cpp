@@ -32,20 +32,20 @@ int main() {
 
 	{
 		Node n{ igui::NodeType::Button };
-		n.set_rect( { 0.f, 0.f, 512.f, 512.f } );
+		n.set_rect( { 0.f, 0.f, 256.f, 512.f } );
 
 		index_t t = interface.add_node( n );
 
 		Node subbox{ igui::NodeType::Button };
-		subbox.set_rect( { 16.f, 16.f, 75.f, 32.f } );
+		subbox.set_rect( { 16.f, 16.f, 86.f, 86.f } );
 		subbox.set_anchors( 0.f, 0.f, 0.f, 0.f );
 		subbox.set_mouse_filter( igui::MouseFilter::Stop );
 
-		subbox.set_position( subbox.get_position() + igui::Vec2f( 48.f, 0.f ) );
+		//subbox.set_position( subbox.get_position() + igui::Vec2f( 64.f, 0.f ) );
 		interface.add_node( subbox, t );
-		subbox.set_position( subbox.get_position() + igui::Vec2f( 48.f, 0.f ) );
+		subbox.set_position( subbox.get_position() + igui::Vec2f( 128.f, 0.f ) );
 		interface.add_node( subbox, t );
-		subbox.set_position( subbox.get_position() + igui::Vec2f( 48.f, 0.f ) );
+		subbox.set_position( subbox.get_position() + igui::Vec2f( 96.f, 0.f ) );
 		interface.add_node( subbox, t );
 
 		//for (int i = 0; i < 9; i++)
