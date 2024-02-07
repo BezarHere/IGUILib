@@ -131,17 +131,6 @@ namespace igui
 		PointerHand,
 	};
 
-	class NodeFactory
-	{
-	public:
-
-
-
-	private:
-		NodeFactory() = delete;
-		~NodeFactory() = delete;
-	};
-
 	enum SizeFlags : i16
 	{
 		SizeFlags_None = 0
