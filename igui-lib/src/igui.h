@@ -98,7 +98,10 @@ namespace igui
 	enum StateMask : u64
 	{
 		StateMask_Enabled = 0x0000'0001,
+		StateMask_Visible = StateMask_Enabled,
+
 		StateMask_Hovered = 0x0000'0002,
+
 		StateMask_Pressed = 0x0000'0004,
 		StateMask_Activated = StateMask_Pressed,
 
@@ -345,6 +348,15 @@ namespace igui
 		/// @error [npos] will be returned
 		index_t add_node( const Node &node, index_t parent = npos );
 
+		/// @brief moves the child up or down through it's siblings, useful for reordering children
+		/// @param new_index the new between the siblings, clamped down if it's out of bounds
+		void move_child( index_t child, index_t new_index );
+
+		/// @brief moves the child to a diffren parent, or makes the child a root node
+		/// @brief if the parent index is `npos`
+		/// @param parent the new parent's index, pass `npos` to make the a child a root node
+		void reparent_child( index_t child, index_t parent );
+
 		/// @brief remove the node at [node_index], removing it's children too
 		/// @brief will change the index of some nodes so be careful
 		/// @param node_index the node index to remove, invalid indices will be ignored
@@ -395,6 +407,7 @@ namespace igui
 		size_t m_ticks;
 		nodes_collection m_nodes;
 		nodes_indices m_roots;
+		std::unique_ptr<NodeTree> m_tree;
 		std::unique_ptr<StyleData> m_style_data;
 		std::unique_ptr<InputRecord> m_input;
 		mutable SPDrawingStateCache m_sp_drawing_sc;
@@ -423,7 +436,12 @@ namespace igui
 		inline const vector<index_t> &get_children() const noexcept {
 			return m_children;
 		}
-
+		
+		void disable();
+		void enable();
+		void hide();
+		void show();
+		void set_visibilty( bool visible );
 		void set_position( Vec2f pos );
 		void set_size( Vec2f size );
 		void set_rect( Vec2f pos, Vec2f size );
@@ -475,6 +493,18 @@ namespace igui
 			return m_mouse_filter;
 		}
 
+		inline bool is_enabled() const noexcept {
+			return m_state & StateMask_Enabled;
+		}
+
+		inline bool is_disabled() const noexcept {
+			return !(m_state & StateMask_Enabled);
+		}
+
+		inline bool is_visible() const noexcept {
+			return m_state & StateMask_Visible;
+		}
+
 	private:
 		NodeType m_type;
 		index_t m_index;
@@ -495,6 +525,7 @@ namespace igui
 
 		string m_text = "Sample text";
 		string m_tooltip = "Sample tooltip"; // <- empty tooltip will not be displayed
+		string m_desc;
 
 		i16 m_text_align = 0;
 

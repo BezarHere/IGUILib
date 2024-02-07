@@ -4,6 +4,8 @@ using namespace igui;
 
 #include "internal.h"
 
+#include <exception>
+
 using DrawingStateCache = Interface::DrawingStateCache;
 
 #if IGUI_IMPL == IGUI_IGLIB
@@ -139,7 +141,7 @@ enum HierarchyNodeFlags : uint16_t
 };
 
 // NHNF
-enum NonHierarchyNodeFlags : uint16_t
+enum NoneHierarchyNodeFlags : uint16_t
 {
 	NHNodeFlag_None = 0x0000,
 
@@ -149,100 +151,169 @@ enum NonHierarchyNodeFlags : uint16_t
 class Interface::NodeTree
 {
 public:
+#pragma region(classes, structs and aliases)
+	// the so called 'pnc', used for relations between nodes and their parents
 	struct ParentNodeConnection
 	{
-		index_t next_node;
-		Vec2f position; // <- global position
-		Color modulate;
-		HierarchyNodeFlags flags; // <- inherited
-		NonHierarchyNodeFlags own_flags; // <- NOT inherited
+		index_t owned_node; // <- what node is the 'parent'
+		index_t parent_pnc; // <- connection to grandparent, can be npos
+		Vec2f position = { 0.f, 0.f }; // <- global position
+		Color modulate = { 1.f, 1.f, 1.f, 1.f };
+		HierarchyNodeFlags flags = HierarchyNodeFlags::HNodeFlag_None; // <- inherited
+		NoneHierarchyNodeFlags own_flags = NoneHierarchyNodeFlags::NHNodeFlag_None; // <- NOT inherited
+	};
+	using PNC = ParentNodeConnection;
+
+	struct NodeEntry
+	{
+		index_t node_index;
+		index_t pnc_index = npos; // <- npos for no pnc (e.g. root)
 	};
 
-	inline NodeTree( const Interface::nodes_indices &roots, const Interface::nodes_collection &nodes )
-		: m_nodes{ roots }, m_nodes_ref{ nodes }, m_connections{} {
+	using node_entries = vector<NodeEntry>;
+	using node_entries_iter = node_entries::reverse_iterator;
+	using node_entries_citer = node_entries::const_reverse_iterator;
+	using node_entries_riter = node_entries::iterator;
+	using node_entries_criter = node_entries::const_iterator;
+
+#pragma endregion
+
+
+	inline NodeTree() {
+		m_entries.reserve( 1024 );
+		m_pncs.reserve( 1024 );
 	}
 
-	// might be wrong
-	inline size_t get_depth() const noexcept {
-		return m_connections.size();
-	}
+	inline void regenerate( const Interface::nodes_indices &roots, const Interface::nodes_collection &nodes ) {
+		m_entries.clear();
+		m_pncs.clear();
 
-	inline operator bool() const noexcept {
-		return !m_nodes.empty();
-	}
+		m_dirty = false;
 
-	inline ParentNodeConnection *get_connection() {
-		if (m_connections.empty())
-			return nullptr;
+		vector<NodeEntry> nodes_to_calculate{};
+		for (index_t n : roots) nodes_to_calculate.emplace_back( n, npos );
 
-		return &m_connections.back();
-	}
-
-	inline const ParentNodeConnection *get_connection() const {
-		if (m_connections.empty())
-			return nullptr;
-
-		return &m_connections.back();
-	}
-
-	// this function must not be called with no nodes
-	inline index_t next_node() {
-
-		const index_t node_index = m_nodes.back();
-		m_nodes.pop_back();
-		const Node &node = m_nodes_ref[ node_index ];
-
-		const index_t next_node_index = m_nodes.empty() ? npos : m_nodes.back();
-
-		if (!node.m_children.empty())
+		while (!nodes_to_calculate.empty())
 		{
-			// adding two connections with the same next_node will create all sorts of bugs
-			if (!m_connections.empty() && m_connections.back().next_node == next_node_index)
-			{
-				// update the last connection
-				m_connections.back().position.x += node.m_rect.x;
-				m_connections.back().position.y += node.m_rect.y;
-				// TODO: modulate
-			}
-			else
-			{
-				// add a new connection
-				m_connections.emplace_back(
-					next_node_index,
-					Vec2f( node.m_rect.x, node.m_rect.y ),
-					Color( 1.f, 1.f, 1.f, 1.f ),
-					m_connections.empty() ? HierarchyNodeFlags::HNodeFlag_None : m_connections.back().flags
-				);
-			}
+			const index_t node_index = nodes_to_calculate.back().node_index;
+			const index_t parent_pnc_index = nodes_to_calculate.back().pnc_index;
+			const Node &node = nodes[ node_index ];
+			m_entries.push_back( nodes_to_calculate.back() );
+			nodes_to_calculate.pop_back();
 
 
-			
-
-			for (nodes_indices::const_reverse_iterator E = node.m_children.rbegin(); E != node.m_children.rend(); E++)
+			if (!node.m_children.empty())
 			{
-				m_nodes.push_back( *E );
+				// add a pnc for this parent
+				// setting only the owned node, other field will be set when required
+				// setting them now might make them out of date when drawing/updating
+				const index_t current_pnc_index = m_pncs.size();
+				m_pncs.emplace_back( node_index, parent_pnc_index );
+
+
+				for (auto E = node.m_children.rbegin(); E != node.m_children.rend(); E++)
+				{
+					nodes_to_calculate.emplace_back( *E, current_pnc_index );
+				}
 			}
 		}
-		// no children to add means that the next node is exposed
-		// check if the ParentNodeConnection is bound to it
-		else if (!m_connections.empty() && next_node_index != npos)
-		{
-			pop_pncs();
-		}
 
-		return node_index;
+		update( nodes );
+	}
+
+	// updates the given pnc
+	inline void update( const Interface::nodes_collection &nodes, PNC &pnc ) {
+		// given how the pncs are generated, no pnc can be before one of it's parents
+		// if a pnc comes before on of it's parents, the algorithm will fail
+
+		if (pnc.parent_pnc != npos)
+		{
+			pnc.position = nodes[ pnc.owned_node ].m_rect.position() + m_pncs[ pnc.parent_pnc ].position;
+			//pnc.modulate = ??
+			pnc.flags = m_pncs[ pnc.parent_pnc ].flags;
+		}
+		else
+		{
+			pnc.position = nodes[ pnc.owned_node ].m_rect.position();
+			//pnc.modulate = ??
+		}
+	}
+
+	// updates all the pncs
+	inline void update( const Interface::nodes_collection &nodes ) {
+		// given how the pncs are generated, no pnc can be before one of it's parents
+		// if a pnc comes before on of it's parents, the algorithm will fail
+		for (PNC &pnc : m_pncs)
+		{
+			update( nodes, pnc );
+		}
+	}
+
+	inline bool is_dirty() const noexcept {
+		return m_dirty;
+	}
+
+	inline void mark_dirty() noexcept {
+		m_dirty = true;
+	}
+
+	inline PNC &get_pnc( const index_t index ) {
+		return m_pncs[ index ];
+	}
+
+	inline const PNC &get_pnc( const index_t index ) const {
+		return m_pncs[ index ];
+	}
+
+	inline const NodeEntry &get_entry( const index_t index ) {
+		return m_entries[ index ];
+	}
+
+	inline node_entries_iter begin() noexcept {
+		// REVERSED
+		return m_entries.rbegin();
+	}
+
+	inline node_entries_iter end() noexcept {
+		// REVERSED
+		return m_entries.rend();
+	}
+
+	inline node_entries_citer begin() const noexcept {
+		// REVERSED
+		return m_entries.rbegin();
+	}
+
+	inline node_entries_citer end() const noexcept {
+		// REVERSED
+		return m_entries.rend();
+	}
+
+	inline node_entries_riter rbegin() noexcept {
+		// REVERSED
+		return m_entries.begin();
+	}
+
+	inline node_entries_riter rend() noexcept {
+		// REVERSED
+		return m_entries.end();
+	}
+
+	inline node_entries_criter rbegin() const noexcept {
+		// REVERSED
+		return m_entries.begin();
+	}
+
+	inline node_entries_criter rend() const noexcept {
+		// REVERSED
+		return m_entries.end();
 	}
 
 private:
-	inline void pop_pncs() {
-		if (m_connections.back().next_node == m_nodes.back())
-			m_connections.pop_back();
-	}
-
-private:
-	typename const Interface::nodes_collection &m_nodes_ref;
-	Interface::nodes_indices m_nodes;
-	vector<ParentNodeConnection> m_connections;
+	bool m_dirty = true;
+	vector<ParentNodeConnection> m_pncs = {};
+	// currently reversed but should it be iterated in reverse instead?
+	vector<NodeEntry> m_entries = {};
 };
 
 class Interface::InputRecord
@@ -576,7 +647,8 @@ namespace igui
 
 	Interface::Interface()
 		: m_drawing_sc{ nullptr }, m_ticks{ 0 },
-		m_input{ new InputRecord() }, m_style_data{ new StyleData() } {
+		m_input{ new InputRecord() }, m_style_data{ new StyleData() },
+		m_tree{ new NodeTree() } {
 
 		// ignore this
 		constexpr size_t DrawingStateCacheSIZE = sizeof( DrawingStateCache );
@@ -599,18 +671,24 @@ namespace igui
 	}
 
 	void Interface::update() {
-		NodeTree tree{ m_roots, m_nodes };
+		using NodeTreeEntry = Interface::NodeTree::NodeEntry;
 
-		for (index_t i = 0; tree; i = tree.next_node())
+		if (m_tree->is_dirty())
 		{
-			Node &node = m_nodes[ i ];
+			// also updates the pncs after generation
+			m_tree->regenerate( m_roots, m_nodes );
+		}
+
+		for (NodeTreeEntry entry : *m_tree)
+		{
+			Node &node = m_nodes[ entry.node_index ];
 
 			if (node.m_rect_dirty)
 			{
 				const float width_dt = node.m_rect.w - node.m_old_rect.w;
 				const float height_dt = node.m_rect.h - node.m_old_rect.h;
 
-				// TODO: skip this if the node has a layout, and order acording to the layout
+				// TODO: skip this if the node has a layout, and order according to the layout
 
 
 				Rectf anchors;
@@ -643,6 +721,11 @@ namespace igui
 			m_drawing_sc = new(reinterpret_cast<void *>(m_sp_drawing_sc.memory.data())) DrawingStateCache();
 		}
 
+		if (m_tree->is_dirty())
+		{
+			m_tree->regenerate( m_roots, m_nodes );
+		}
+
 		m_drawing_sc->start( renderer );
 
 		m_input->raw_mouse_pos = Vec2f( renderer->get_window().get_mouse_position() );
@@ -660,7 +743,6 @@ namespace igui
 		const InterfaceStyle &style_image = m_style_data->get_image();
 
 		MouseCapturedState mouse_captured = MouseCapturedState::Free;
-		NodeTree tree{ m_roots, m_nodes };
 		index_t last_node = npos;
 
 		/*
@@ -671,22 +753,32 @@ namespace igui
 		or reverse the depth test or some shit, just fix this mess
 		*/
 
-		for (index_t i = 0; tree; i = tree.next_node())
-		{
-			const Node &node = m_nodes[ i ];
-			const ParentNodeConnection *con = ([]( const ParentNodeConnection *c ) { return c ? c : &DefaultCPNC; })(tree.get_connection());
+		m_tree->update( m_nodes );
 
-			const Vec2f node_global_pos = { con->position.x + node.m_rect.x, con->position.y + node.m_rect.y };
+		const ig::DepthTestComparison old_dtc = renderer->get_depth_test_comparison();
+		const bool was_depthtest_enabled = renderer->is_feature_enabled( ig::Feature::DepthTest );
+		renderer->set_depth_test_comparison( ig::DepthTestComparison::LessThen );
+		if (!was_depthtest_enabled)
+			renderer->enable_feature( ig::Feature::DepthTest );
+
+		for (NodeTree::NodeEntry entry : *m_tree)
+		{
+			const Node &node = m_nodes[ entry.node_index ];
+			const ParentNodeConnection &con = entry.pnc_index == npos ? DefaultPNC : m_tree->get_pnc( entry.pnc_index );
+
+			const Vec2f node_global_pos = { con.position.x + node.m_rect.x, con.position.y + node.m_rect.y };
 			const Rectf node_global_rect = { node_global_pos.x, node_global_pos.y, node.m_rect.w, node.m_rect.h };
 
 
 			const bool mouse_available =
 				node.m_mouse_filter != MouseFilter::Ignore &&
 				mouse_captured == MouseCapturedState::Free ||
-				(mouse_captured == MouseCapturedState::CapturedToFamily && con->flags & HierarchyNodeFlags::HNodeFlag_CapturedMouse);
+				(mouse_captured == MouseCapturedState::CapturedToFamily && con.flags & HierarchyNodeFlags::HNodeFlag_CapturedMouse);
+			const bool hovered = mouse_available && node_global_rect.contains( m_input->mouse_pos );
 
-			if (mouse_available)
+			if (hovered)
 			{
+				std::cout << "mouse available: " << entry.node_index << '\n';
 				if (node.m_mouse_filter == MouseFilter::Stop)
 				{
 					mouse_captured = MouseCapturedState::Captured;
@@ -697,7 +789,7 @@ namespace igui
 				}
 			}
 
-			const bool hovered = mouse_available && node_global_rect.contains( m_input->mouse_pos );
+
 
 			// crappy
 			const InputActionState _ics = m_input->get_action_state( node.m_trigger_button );
@@ -784,10 +876,12 @@ namespace igui
 
 			// loop tail:
 
-			last_node = i;
+			last_node = entry.node_index;
 		}
 
-
+		renderer->set_depth_test_comparison( old_dtc );
+		if (!was_depthtest_enabled)
+			renderer->disable_feature( ig::Feature::DepthTest );
 	}
 
 	void Interface::input( InputEvent event ) {
@@ -818,7 +912,17 @@ namespace igui
 		}
 
 		m_nodes[ node_index ].m_index = node_index;
+
+		m_tree->mark_dirty();
 		return node_index;
+	}
+
+	void Interface::move_child( index_t child, index_t new_index ) {
+		throw std::exception( "not implemented" );
+	}
+
+	void Interface::reparent_child( index_t child, index_t parent ) {
+		throw std::exception( "not implemented" );
 	}
 
 	void Interface::remove_node( const index_t node_index ) {
@@ -894,12 +998,17 @@ namespace igui
 			}
 		}
 
+
+		m_tree->mark_dirty();
+
 		// should we validate?
 		//validate();
 	}
 
 	index_t Interface::transfer_branch( const this_type &old, index_t node_index, index_t parent ) {
-		return InvalidIndex;
+
+		m_tree->mark_dirty();
+		return npos;
 	}
 
 	void Interface::validate() {
@@ -1000,6 +1109,33 @@ namespace igui
 		return m_drawing_sc;
 	}
 
+
+	void Node::disable() {
+		m_state &= ~StateMask_Enabled;
+	}
+
+	void Node::enable() {
+		m_state |= StateMask_Enabled;
+	}
+
+	void Node::hide() {
+		m_state &= ~StateMask_Visible;
+	}
+
+	void Node::show() {
+		m_state |= StateMask_Visible;
+	}
+
+	void Node::set_visibilty( bool visible ) {
+		if (visible)
+		{
+			show();
+		}
+		else
+		{
+			hide();
+		}
+	}
 
 	void Node::set_position( Vec2f pos ) {
 		m_rect.x = pos.x;
