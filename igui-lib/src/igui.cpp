@@ -1170,15 +1170,15 @@ namespace igui
 			m_rect_dirty = true;
 	}
 
-	void Node::set_anchors( const Rectf &anchros ) {
+	void Node::set_anchors( const Boxf &anchros ) {
 		m_anchors = anchros;
 	}
 
 	void Node::set_anchors( float left, float right, float top, float bottom ) {
-		m_anchors.x = left;
-		m_anchors.y = top;
-		m_anchors.w = right - left;
-		m_anchors.h = bottom - top;
+		m_anchors.left = left;
+		m_anchors.right = top;
+		m_anchors.top = top;
+		m_anchors.bottom = bottom;
 	}
 
 	void Node::set_mouse_filter( MouseFilter filter ) {
