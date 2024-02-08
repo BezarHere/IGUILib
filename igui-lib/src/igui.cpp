@@ -6,8 +6,6 @@ using namespace igui;
 
 #include <exception>
 
-using DrawingStateCache = Interface::DrawingStateCache;
-
 #if IGUI_IMPL == IGUI_IGLIB
 template <size_t _SZ>
 using Vertex2Array = ig::BaseVertexArray<ig::Vertex2, stacklist<ig::Vertex2, _SZ>>;
@@ -147,6 +145,139 @@ enum NoneHierarchyNodeFlags : uint16_t
 
 };
 
+
+using IndexBuffer = ig::Index8Buffer;
+
+class Interface::RenderingFactory
+{
+public:
+	static constexpr size_t PerBoxVertices = 4;
+	static constexpr size_t PerFrameVertices = 10;
+
+	static constexpr size_t BoxPatchesCount = 8;
+	static constexpr size_t FramePatchesCount = 6;
+
+	static constexpr size_t TotalBoxVertices = PerBoxVertices * BoxPatchesCount;
+	static constexpr size_t TotalFrameVertices = PerFrameVertices * FramePatchesCount;
+
+	RenderingFactory() {
+		constexpr ig::Vertex2 BaseVertex2 = { ig::Vector2f(), ig::ColorfTable::White, ig::Vector2f() };
+		constexpr std::array<ig::Vector2f, 4> BoxDirTable = { ig::Vector2f( 0.f, 0.f ), ig::Vector2f( 1.f, 0.f ), ig::Vector2f( 1.f, 1.f ), ig::Vector2f( 0.f, 1.f ) };
+
+		for (size_t i = 0; i < box_vertices.get_vertices().size(); i++)
+		{
+			box_vertices.get_vertices()[ i ].pos = BoxDirTable[ i ] * 32.f;
+			box_vertices.get_vertices()[ i ].clr = ig::ColorfTable::White;
+			box_vertices.get_vertices()[ i ].uv = BoxDirTable[ i ];
+		}
+
+	}
+
+	inline void start( Renderer *const r ) {
+		m_renderer = r;
+	}
+
+	inline void gen_box( const float x, const float y, const float w, const float h ) {
+		box_vertices[ 0 ].pos.x = x;
+		box_vertices[ 0 ].pos.y = y;
+
+		box_vertices[ 1 ].pos.x = x + w;
+		box_vertices[ 1 ].pos.y = y;
+
+		box_vertices[ 2 ].pos.x = x + w;
+		box_vertices[ 2 ].pos.y = y + h;
+
+		box_vertices[ 3 ].pos.x = x;
+		box_vertices[ 3 ].pos.y = y + h;
+
+		if (m_dirty_color)
+		{
+			for (size_t i = 0; i < box_vertices.get_vertices().size(); i++)
+			{
+				box_vertices[ i ].clr = m_active_style_element.color;
+			}
+		}
+
+		box_vertices.update();
+		m_dirty_color = false;
+	}
+
+	inline void gen_frame( const Rectf &outer, const Rectf &inner ) {
+		const Rectf::vector_type outer_end = outer.end();
+		const Rectf::vector_type inner_end = inner.end();
+		// quad 0
+		frame_vertices[ 0 ].pos = { outer.x, outer.y };
+		frame_vertices[ 1 ].pos = { inner.x, inner.y };
+		frame_vertices[ 2 ].pos = { inner_end.x, inner.y };
+		frame_vertices[ 3 ].pos = { outer_end.x, outer.y };
+
+		// quad 1
+		frame_vertices[ 4 ].pos = inner_end;
+		frame_vertices[ 5 ].pos = outer_end;
+
+		// quad 2
+		frame_vertices[ 6 ].pos = { inner.x, inner_end.y };
+		frame_vertices[ 7 ].pos = { outer.x, outer_end.y };
+
+		// quad 3
+		frame_vertices[ 8 ].pos = frame_vertices[ 1 ].pos;
+		frame_vertices[ 9 ].pos = frame_vertices[ 0 ].pos;
+
+		if (m_dirty_color)
+		{
+			for (size_t i = 0; i < frame_vertices.get_vertices().size(); i++)
+			{
+				frame_vertices[ i ].clr = m_active_style_element.color;
+			}
+		}
+
+		frame_vertices.update();
+		m_dirty_color = false;
+	}
+
+	inline void apply_style_element( const StyleElement &element ) {
+		if (element.color != m_active_style_element.color)
+		{
+			m_active_style_element.color = element.color;
+			m_dirty_color = true;
+		}
+
+		if (element.texture != m_active_style_element.texture)
+		{
+			m_active_style_element.texture = element.texture;
+			m_renderer->bind_texture( element.texture->get_handle() );
+		}
+	}
+
+	inline void draw_box() const {
+		m_renderer->get_canvas().draw( box_vertices.get_buffer(), index_buffers.box );
+	}
+
+	inline void draw_frame() const {
+		m_renderer->get_canvas().draw( frame_vertices.get_buffer(), index_buffers.frame );
+	}
+
+
+	Vertex2Array<TotalBoxVertices> box_vertices{ ig::PrimitiveType::Triangle, 4, ig::BufferUsage::Stream }; // quad
+	Vertex2Array<TotalFrameVertices> frame_vertices{ ig::PrimitiveType::Triangle, 4 * 2 + 2, ig::BufferUsage::Stream }; // quad strip
+
+	const struct {
+		static constexpr IndexBuffer::element_type BoxI[ 6 * 1 ] = { 0, 1, 2, 2, 3, 0 };
+		static constexpr IndexBuffer::element_type FrameI[ 6 * 4 ] = {
+			0, 1, 2, 2, 3, 0, // quad 0
+			3, 2, 4, 4, 5, 3, // quad 1
+			5, 4, 6, 6, 7, 5, // quad 2
+			7, 6, 8, 8, 9, 7 // quad 3
+		};
+
+		const IndexBuffer box = { std::size( BoxI ), ig::VBufferUsage::StaticDraw, BoxI };
+		const IndexBuffer frame = { std::size( FrameI ), ig::VBufferUsage::StaticDraw, FrameI };
+	} index_buffers;
+private:
+	StyleElement m_active_style_element = {};
+	bool m_dirty_color = true;
+	Renderer *m_renderer = nullptr;
+};
 
 class Interface::NodeTree
 {
@@ -330,11 +461,7 @@ public:
 		union
 		{
 			bool active;
-			struct
-			{
-				int16_t x, y;
-			};
-
+			Vec2i point;
 		} state;
 		index_t update_tick;
 		bool handled = false;
@@ -374,8 +501,8 @@ public:
 		case ig::InputEventType::MouseScrollWheel:
 			{
 				m_values[ mscroll_offset ].update_tick = m_tick;
-				m_values[ mscroll_offset ].state.x = input.mouse_scroll.x;
-				m_values[ mscroll_offset ].state.y = input.mouse_scroll.y;
+				m_values[ mscroll_offset ].state.point.x = input.mouse_scroll.x;
+				m_values[ mscroll_offset ].state.point.y = input.mouse_scroll.y;
 			}
 			break;
 		default:
@@ -512,162 +639,28 @@ private:
 	mutable InterfaceStyle m_image;
 };
 
+
 namespace igui
 {
-	using IndexBuffer = ig::Index8Buffer;
-
-
-	struct Interface::DrawingStateCache
-	{
-		DrawingStateCache() {
-			constexpr ig::Vertex2 BaseVertex2 = { ig::Vector2f(), ig::ColorfTable::White, ig::Vector2f() };
-			constexpr std::array<ig::Vector2f, 4> BoxDirTable = { ig::Vector2f( 0.f, 0.f ), ig::Vector2f( 1.f, 0.f ), ig::Vector2f( 1.f, 1.f ), ig::Vector2f( 0.f, 1.f ) };
-
-			for (size_t i = 0; i < box_vertices.get_vertices().size(); i++)
-			{
-				box_vertices.get_vertices()[ i ].pos = BoxDirTable[ i ] * 32.f;
-				box_vertices.get_vertices()[ i ].clr = ig::ColorfTable::White;
-				box_vertices.get_vertices()[ i ].uv = BoxDirTable[ i ];
-			}
-
-		}
-
-		inline void start( Renderer *const r ) {
-			m_renderer = r;
-		}
-
-		inline void gen_box( const float x, const float y, const float w, const float h ) {
-			box_vertices[ 0 ].pos.x = x;
-			box_vertices[ 0 ].pos.y = y;
-
-			box_vertices[ 1 ].pos.x = x + w;
-			box_vertices[ 1 ].pos.y = y;
-
-			box_vertices[ 2 ].pos.x = x + w;
-			box_vertices[ 2 ].pos.y = y + h;
-
-			box_vertices[ 3 ].pos.x = x;
-			box_vertices[ 3 ].pos.y = y + h;
-
-			if (m_dirty_color)
-			{
-				for (size_t i = 0; i < box_vertices.get_vertices().size(); i++)
-				{
-					box_vertices[ i ].clr = m_active_style_element.color;
-				}
-			}
-
-			box_vertices.update();
-			m_dirty_color = false;
-		}
-
-		inline void gen_frame( const Rectf &outer, const Rectf &inner ) {
-			const Rectf::vector_type outer_end = outer.end();
-			const Rectf::vector_type inner_end = inner.end();
-			// quad 0
-			frame_vertices[ 0 ].pos = { outer.x, outer.y };
-			frame_vertices[ 1 ].pos = { inner.x, inner.y };
-			frame_vertices[ 2 ].pos = { inner_end.x, inner.y };
-			frame_vertices[ 3 ].pos = { outer_end.x, outer.y };
-
-			// quad 1
-			frame_vertices[ 4 ].pos = inner_end;
-			frame_vertices[ 5 ].pos = outer_end;
-
-			// quad 2
-			frame_vertices[ 6 ].pos = { inner.x, inner_end.y };
-			frame_vertices[ 7 ].pos = { outer.x, outer_end.y };
-
-			// quad 3
-			frame_vertices[ 8 ].pos = frame_vertices[ 1 ].pos;
-			frame_vertices[ 9 ].pos = frame_vertices[ 0 ].pos;
-
-			if (m_dirty_color)
-			{
-				for (size_t i = 0; i < frame_vertices.get_vertices().size(); i++)
-				{
-					frame_vertices[ i ].clr = m_active_style_element.color;
-				}
-			}
-
-			frame_vertices.update();
-			m_dirty_color = false;
-		}
-
-		inline void apply_style_element( const StyleElement &element ) {
-			if (element.color != m_active_style_element.color)
-			{
-				m_active_style_element.color = element.color;
-				m_dirty_color = true;
-			}
-
-			if (element.texture != m_active_style_element.texture)
-			{
-				m_active_style_element.texture = element.texture;
-				m_renderer->bind_texture( element.texture->get_handle() );
-			}
-		}
-
-		inline void draw_box() const {
-			m_renderer->get_canvas().draw( box_vertices.get_buffer(), index_buffers.box );
-		}
-
-		inline void draw_frame() const {
-			m_renderer->get_canvas().draw( frame_vertices.get_buffer(), index_buffers.frame );
-		}
-
-		Vertex2Array<4> box_vertices{ ig::PrimitiveType::Triangle, 4, ig::BufferUsage::Stream }; // quad
-		Vertex2Array<10> frame_vertices{ ig::PrimitiveType::Triangle, 4 * 2 + 2, ig::BufferUsage::Stream }; // quad strip
-		const struct {
-			static constexpr IndexBuffer::element_type BoxI[ 6 * 1 ] = { 0, 1, 2, 2, 3, 0 };
-			static constexpr IndexBuffer::element_type FrameI[ 6 * 4 ] = {
-				0, 1, 2, 2, 3, 0, // quad 0
-				3, 2, 4, 4, 5, 3, // quad 1
-				5, 4, 6, 6, 7, 5, // quad 2
-				7, 6, 8, 8, 9, 7 // quad 3
-			};
-
-			const IndexBuffer box = { std::size( BoxI ), ig::VBufferUsage::StaticDraw, BoxI };
-			const IndexBuffer frame = { std::size( FrameI ), ig::VBufferUsage::StaticDraw, FrameI };
-		} index_buffers;
-	private:
-		StyleElement m_active_style_element = {};
-		bool m_dirty_color = true;
-		Renderer *m_renderer = nullptr;
-	};
-
 
 	Node::Node()
-		: m_type{ NodeType::None }, m_index{ npos } {
+		: m_type{ NodeType::None }, m_index{ npos }, m_layout{} {
 	}
 
 	Node::Node( NodeType type )
-		: m_type{ type }, m_index{ npos } {
+		: m_type{ type }, m_index{ npos }, m_layout{} {
 	}
 
 	Interface::Interface()
-		: m_drawing_sc{ nullptr }, m_ticks{ 0 },
-		m_input{ new InputRecord() }, m_style_data{ new StyleData() },
+		: m_ticks{ 0 },
+		m_drawing_sc{ new RenderingFactory() },
+		m_input{ new InputRecord() },
+		m_style_data{ new StyleData() },
 		m_tree{ new NodeTree() } {
 
-		// ignore this
-		constexpr size_t DrawingStateCacheSIZE = sizeof( DrawingStateCache );
-		constexpr size_t SPDrawingStateCacheSIZE = sizeof( Interface::SPDrawingStateCache );
-		static_assert(DrawingStateCacheSIZE <= SPDrawingStateCacheSIZE, "Stack buffer is too small for DrawingStateCache");
 	}
 
 	Interface::~Interface() {
-		if (m_drawing_sc)
-		{
-			if (m_drawing_sc == reinterpret_cast<void *>(m_sp_drawing_sc.memory.data()))
-			{
-				m_drawing_sc->~DrawingStateCache();
-			}
-			else
-			{
-				delete m_drawing_sc;
-			}
-		}
 	}
 
 	void Interface::update() {
@@ -676,7 +669,7 @@ namespace igui
 		if (m_tree->is_dirty())
 		{
 			// also updates the pncs after generation
-			m_tree->regenerate( m_roots, m_nodes );
+			rebuild();
 		}
 
 		for (NodeTreeEntry entry : *m_tree)
@@ -716,13 +709,9 @@ namespace igui
 		static const ParentNodeConnection DefaultCPNC = { 0 };
 		static ParentNodeConnection DefaultPNC = { 0 };
 
-		if (!m_drawing_sc)
-		{
-			m_drawing_sc = new(reinterpret_cast<void *>(m_sp_drawing_sc.memory.data())) DrawingStateCache();
-		}
-
 		if (m_tree->is_dirty())
 		{
+			// draw is const, can't just call rebuild
 			m_tree->regenerate( m_roots, m_nodes );
 		}
 
@@ -778,7 +767,7 @@ namespace igui
 
 			if (hovered)
 			{
-				std::cout << "mouse available: " << entry.node_index << '\n';
+				//std::cout << "mouse available: " << entry.node_index << '\n';
 				if (node.m_mouse_filter == MouseFilter::Stop)
 				{
 					mouse_captured = MouseCapturedState::Captured;
@@ -918,10 +907,14 @@ namespace igui
 	}
 
 	void Interface::move_child( index_t child, index_t new_index ) {
+		UNREFERENCED_PARAMETER( child );
+		UNREFERENCED_PARAMETER( new_index );
 		throw std::exception( "not implemented" );
 	}
 
 	void Interface::reparent_child( index_t child, index_t parent ) {
+		UNREFERENCED_PARAMETER( child );
+		UNREFERENCED_PARAMETER( parent );
 		throw std::exception( "not implemented" );
 	}
 
@@ -1006,7 +999,9 @@ namespace igui
 	}
 
 	index_t Interface::transfer_branch( const this_type &old, index_t node_index, index_t parent ) {
-
+		UNREFERENCED_PARAMETER( old );
+		UNREFERENCED_PARAMETER( node_index );
+		UNREFERENCED_PARAMETER( parent );
 		m_tree->mark_dirty();
 		return npos;
 	}
@@ -1066,13 +1061,20 @@ namespace igui
 
 	}
 
+	void Interface::rebuild() {
+		m_tree->regenerate( m_roots, m_nodes );
+		validate();
+	}
+
 	vector<index_t> Interface::get_family( const index_t node_index ) const {
 		vector<index_t> indices{};
 		vector<index_t> tobe_processed{};
 		tobe_processed.push_back( node_index );
 
 		const size_t nodes_count = m_nodes.size();
+#ifdef _DEBUG
 		size_t limit = 0;
+#endif // _DEBUG
 		while (!tobe_processed.empty())
 		{
 #ifdef _DEBUG
@@ -1100,15 +1102,6 @@ namespace igui
 
 		return indices;
 	}
-
-	DrawingStateCache *Interface::get_drawing_sc() {
-		return m_drawing_sc;
-	}
-
-	const DrawingStateCache *Interface::get_drawing_sc() const {
-		return m_drawing_sc;
-	}
-
 
 	void Node::disable() {
 		m_state &= ~StateMask_Enabled;
@@ -1176,7 +1169,7 @@ namespace igui
 
 	void Node::set_anchors( float left, float right, float top, float bottom ) {
 		m_anchors.left = left;
-		m_anchors.right = top;
+		m_anchors.right = right;
 		m_anchors.top = top;
 		m_anchors.bottom = bottom;
 	}
