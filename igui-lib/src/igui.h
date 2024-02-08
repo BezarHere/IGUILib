@@ -354,7 +354,6 @@ namespace igui
 	class Interface
 	{
 	public:
-		struct DrawingStateCache;
 
 		using this_type = Interface;
 		using nodes_collection = vector<Node>;
@@ -412,12 +411,11 @@ namespace igui
 			return m_nodes;
 		}
 
-		DrawingStateCache *get_drawing_sc();
-		const DrawingStateCache *get_drawing_sc() const;
-
 		/// @brief checking if anything is not 'normal'
 		void validate();
 
+		// rebuilds & validates the node tree
+		void rebuild();
 	private:
 		vector<index_t> get_family( const index_t node_index ) const;
 
@@ -425,13 +423,8 @@ namespace igui
 		class NodeTree;
 		class InputRecord;
 		class StyleData;
-		// internal structure
-		struct SPDrawingStateCache
-		{
-			// FOR USERS: Changing this value from 2048 will CORRUPT the STACK
-			static constexpr size_t AllocationSize = 2048;
-			std::array<i32, AllocationSize / 4> memory = {};
-		};
+		class RenderingFactory;
+
 
 		size_t m_ticks;
 		nodes_collection m_nodes;
@@ -439,8 +432,7 @@ namespace igui
 		std::unique_ptr<NodeTree> m_tree;
 		std::unique_ptr<StyleData> m_style_data;
 		std::unique_ptr<InputRecord> m_input;
-		mutable SPDrawingStateCache m_sp_drawing_sc;
-		mutable DrawingStateCache *m_drawing_sc;
+		std::unique_ptr<RenderingFactory> m_drawing_sc;
 	};
 
 	typedef void(*NodeSignalProc)(Node *node, uintptr_t action);
@@ -577,7 +569,7 @@ namespace igui
 			union LayoutPadding
 			{
 				float padding;
-				struct {
+				struct __nameless_vhpadding {
 					float vpadding, hpadding;
 				};
 			};
