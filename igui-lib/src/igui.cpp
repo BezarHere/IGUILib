@@ -5,11 +5,13 @@ using namespace igui;
 #include "internal.h"
 
 #include <exception>
+#include <array>
 
 #if IGUI_IMPL == IGUI_IGLIB
 template <size_t _SZ>
 using Vertex2Array = ig::BaseVertexArray<ig::Vertex2, stacklist<ig::Vertex2, _SZ>>;
 using Vertex2 = ig::Vertex2;
+using IndexBuffer = ig::Index8Buffer;
 #endif
 
 enum class InputActionState
@@ -147,8 +149,6 @@ enum NoneHierarchyNodeFlags : uint16_t
 };
 
 
-using IndexBuffer = ig::Index8Buffer;
-
 template <typename _T, size_t _SZ, size_t _REPC>
 static constexpr std::array<_T, _REPC *_SZ> repeat_pattern( const std::array<_T, _SZ> &arr ) {
 	static_assert(_REPC > 0, "can't repeat zero times!");
@@ -192,10 +192,16 @@ public:
 	static constexpr size_t PerBoxVertices = 4;
 	static constexpr size_t PerFrameVertices = 10;
 
-	// FIXME: why does this break when setting it over 64? only the last 64 boxes are rendered only
-	static constexpr size_t BoxPatchesCount = 0x40;
-	// each frame contains 4 rects, so it makes sense to break above 16 (64/4) but why break at all???
-	static constexpr size_t FramePatchesCount = 0x10;
+	static constexpr size_t IndexMaxValue = (1ull << (sizeof( IndexBuffer::element_type ) * 8)) - 1;
+
+	static constexpr size_t RectPatchesMaxCount = 0x100;
+	static constexpr size_t FramePatchesMaxCount = 0x100;
+
+	static constexpr size_t BoxPatchesCount =
+		std::min<size_t>( (IndexMaxValue + 1) / PerBoxVertices, RectPatchesMaxCount );
+
+	static constexpr size_t FramePatchesCount =
+		std::min<size_t>( (IndexMaxValue + 1) / PerFrameVertices, FramePatchesMaxCount );
 
 	static constexpr size_t TotalBoxVertices = PerBoxVertices * BoxPatchesCount;
 	static constexpr size_t TotalFrameVertices = PerFrameVertices * FramePatchesCount;
@@ -259,10 +265,10 @@ public:
 		static constexpr size_t IndicesPerBox = 6;
 		static constexpr size_t IndicesPerFrame = IndicesPerBox * 4;
 
-		using BulkBoxIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerBox * BoxPatchesCount>;
+		using BulkBoxIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerBox *BoxPatchesCount>;
 		using BoxIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerBox>;
 
-		using BulkFrameIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerFrame * FramePatchesCount>;
+		using BulkFrameIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerFrame *FramePatchesCount>;
 		using FrameIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerFrame>;
 
 		static constexpr BulkBoxIndexBufferArray BoxI =
@@ -386,7 +392,7 @@ Interface::RenderingFactory::dispatch_frames() {
 	frame_vertices.update( 0, m_frame_build_index * PerFrameVertices );
 	m_renderer->get_canvas().draw( frame_vertices.get_buffer(), index_buffers.frame );
 	m_frame_build_index = 0;
-	
+
 }
 
 
@@ -920,7 +926,7 @@ namespace igui
 
 					m_drawing_sc->build_rect( node_global_rect );
 
-					const auto boarder = style_image.panel.boarder.value();
+					const auto &boarder = style_image.panel.boarder.value();
 
 					m_drawing_sc->apply_style_element( boarder.style );
 
