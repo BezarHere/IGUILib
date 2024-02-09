@@ -9,6 +9,7 @@ using namespace igui;
 #if IGUI_IMPL == IGUI_IGLIB
 template <size_t _SZ>
 using Vertex2Array = ig::BaseVertexArray<ig::Vertex2, stacklist<ig::Vertex2, _SZ>>;
+using Vertex2 = ig::Vertex2;
 #endif
 
 enum class InputActionState
@@ -148,92 +149,93 @@ enum NoneHierarchyNodeFlags : uint16_t
 
 using IndexBuffer = ig::Index8Buffer;
 
+template <typename _T, size_t _SZ, size_t _REPC>
+static constexpr std::array<_T, _REPC *_SZ> repeat_pattern( const std::array<_T, _SZ> &arr ) {
+	static_assert(_REPC > 0, "can't repeat zero times!");
+	std::array<_T, _REPC *_SZ> result;
+
+	// copy pattern _REPC times
+	for (size_t i = 0; i < _REPC; i++)
+	{
+		// copy pattern
+		for (size_t j = 0; j < _SZ; j++)
+		{
+			result[ i * _SZ + j ] = arr[ j ];
+		}
+	}
+
+	return result;
+}
+
+template <size_t _SZ, size_t _REPC>
+static constexpr std::array<IndexBuffer::element_type, _REPC *_SZ>
+indexbuffer_pattern( const std::array<IndexBuffer::element_type, _SZ> &arr, const size_t shape_vert_count ) {
+	static_assert(_REPC > 0, "can't repeat zero times!");
+	std::array<IndexBuffer::element_type, _REPC *_SZ> result;
+
+	// copy pattern _REPC times
+	for (size_t i = 0; i < _REPC; i++)
+	{
+		// copy pattern
+		for (size_t j = 0; j < _SZ; j++)
+		{
+			result[ i * _SZ + j ] = arr[ j ] + static_cast<IndexBuffer::element_type>(i * shape_vert_count);
+		}
+	}
+
+	return result;
+}
+
 class Interface::RenderingFactory
 {
 public:
 	static constexpr size_t PerBoxVertices = 4;
 	static constexpr size_t PerFrameVertices = 10;
 
-	static constexpr size_t BoxPatchesCount = 8;
-	static constexpr size_t FramePatchesCount = 6;
+	// FIXME: why does this break when setting it over 64? only the last 64 boxes are rendered only
+	static constexpr size_t BoxPatchesCount = 0x40;
+	// each frame contains 4 rects, so it makes sense to break above 16 (64/4) but why break at all???
+	static constexpr size_t FramePatchesCount = 0x10;
 
 	static constexpr size_t TotalBoxVertices = PerBoxVertices * BoxPatchesCount;
 	static constexpr size_t TotalFrameVertices = PerFrameVertices * FramePatchesCount;
 
 	RenderingFactory() {
-		constexpr ig::Vertex2 BaseVertex2 = { ig::Vector2f(), ig::ColorfTable::White, ig::Vector2f() };
-		constexpr std::array<ig::Vector2f, 4> BoxDirTable = { ig::Vector2f( 0.f, 0.f ), ig::Vector2f( 1.f, 0.f ), ig::Vector2f( 1.f, 1.f ), ig::Vector2f( 0.f, 1.f ) };
-
-		for (size_t i = 0; i < box_vertices.get_vertices().size(); i++)
-		{
-			box_vertices.get_vertices()[ i ].pos = BoxDirTable[ i ] * 32.f;
-			box_vertices.get_vertices()[ i ].clr = ig::ColorfTable::White;
-			box_vertices.get_vertices()[ i ].uv = BoxDirTable[ i ];
-		}
 
 	}
+
+	inline void dispatch_boxes();
+	inline void dispatch_frames();
 
 	inline void start( Renderer *const r ) {
 		m_renderer = r;
-	}
 
-	inline void gen_box( const float x, const float y, const float w, const float h ) {
-		box_vertices[ 0 ].pos.x = x;
-		box_vertices[ 0 ].pos.y = y;
-
-		box_vertices[ 1 ].pos.x = x + w;
-		box_vertices[ 1 ].pos.y = y;
-
-		box_vertices[ 2 ].pos.x = x + w;
-		box_vertices[ 2 ].pos.y = y + h;
-
-		box_vertices[ 3 ].pos.x = x;
-		box_vertices[ 3 ].pos.y = y + h;
-
-		if (m_dirty_color)
+		// finish should flush m_box_build_index
+		// flushing it sets it to zero
+		if (m_box_build_index)
 		{
-			for (size_t i = 0; i < box_vertices.get_vertices().size(); i++)
-			{
-				box_vertices[ i ].clr = m_active_style_element.color;
-			}
+			dispatch_boxes();
 		}
 
-		box_vertices.update();
-		m_dirty_color = false;
-	}
-
-	inline void gen_frame( const Rectf &outer, const Rectf &inner ) {
-		const Rectf::vector_type outer_end = outer.end();
-		const Rectf::vector_type inner_end = inner.end();
-		// quad 0
-		frame_vertices[ 0 ].pos = { outer.x, outer.y };
-		frame_vertices[ 1 ].pos = { inner.x, inner.y };
-		frame_vertices[ 2 ].pos = { inner_end.x, inner.y };
-		frame_vertices[ 3 ].pos = { outer_end.x, outer.y };
-
-		// quad 1
-		frame_vertices[ 4 ].pos = inner_end;
-		frame_vertices[ 5 ].pos = outer_end;
-
-		// quad 2
-		frame_vertices[ 6 ].pos = { inner.x, inner_end.y };
-		frame_vertices[ 7 ].pos = { outer.x, outer_end.y };
-
-		// quad 3
-		frame_vertices[ 8 ].pos = frame_vertices[ 1 ].pos;
-		frame_vertices[ 9 ].pos = frame_vertices[ 0 ].pos;
-
-		if (m_dirty_color)
+		// same story as m_box_build_index
+		if (m_frame_build_index)
 		{
-			for (size_t i = 0; i < frame_vertices.get_vertices().size(); i++)
-			{
-				frame_vertices[ i ].clr = m_active_style_element.color;
-			}
+			dispatch_frames();
 		}
-
-		frame_vertices.update();
-		m_dirty_color = false;
 	}
+
+
+	inline void finish() {
+		if (m_box_build_index)
+			dispatch_boxes();
+
+		if (m_frame_build_index)
+			dispatch_frames();
+
+	}
+
+	inline void build_rect( const Rectf &rect );
+	inline void build_frame( const Rectf &outer, const Rectf &inner );
 
 	inline void apply_style_element( const StyleElement &element ) {
 		if (element.color != m_active_style_element.color)
@@ -249,35 +251,146 @@ public:
 		}
 	}
 
-	inline void draw_box() const {
-		m_renderer->get_canvas().draw( box_vertices.get_buffer(), index_buffers.box );
-	}
+	Vertex2Array<TotalBoxVertices> box_vertices{ ig::PrimitiveType::Triangle, TotalBoxVertices, ig::BufferUsage::Stream }; // quad
+	Vertex2Array<TotalFrameVertices> frame_vertices{ ig::PrimitiveType::Triangle, TotalFrameVertices, ig::BufferUsage::Stream }; // quad strip
 
-	inline void draw_frame() const {
-		m_renderer->get_canvas().draw( frame_vertices.get_buffer(), index_buffers.frame );
-	}
+	const struct RFIndexBuffers {
+
+		static constexpr size_t IndicesPerBox = 6;
+		static constexpr size_t IndicesPerFrame = IndicesPerBox * 4;
+
+		using BulkBoxIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerBox * BoxPatchesCount>;
+		using BoxIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerBox>;
+
+		using BulkFrameIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerFrame * FramePatchesCount>;
+		using FrameIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerFrame>;
+
+		static constexpr BulkBoxIndexBufferArray BoxI =
+			indexbuffer_pattern<IndicesPerBox, BoxPatchesCount>( BoxIndexBufferArray{ 0, 1, 2, 2, 3, 0 }, 4 );
 
 
-	Vertex2Array<TotalBoxVertices> box_vertices{ ig::PrimitiveType::Triangle, 4, ig::BufferUsage::Stream }; // quad
-	Vertex2Array<TotalFrameVertices> frame_vertices{ ig::PrimitiveType::Triangle, 4 * 2 + 2, ig::BufferUsage::Stream }; // quad strip
+		static constexpr BulkFrameIndexBufferArray FrameI =
+			indexbuffer_pattern<IndicesPerFrame, FramePatchesCount>(
+				FrameIndexBufferArray{
+					0, 1, 2, 2, 3, 0, // quad 0
+					3, 2, 4, 4, 5, 3, // quad 1
+					5, 4, 6, 6, 7, 5, // quad 2
+					7, 6, 8, 8, 9, 7 // quad 3
+				}, IndicesPerBox + 2 * 2 );
 
-	const struct {
-		static constexpr IndexBuffer::element_type BoxI[ 6 * 1 ] = { 0, 1, 2, 2, 3, 0 };
-		static constexpr IndexBuffer::element_type FrameI[ 6 * 4 ] = {
-			0, 1, 2, 2, 3, 0, // quad 0
-			3, 2, 4, 4, 5, 3, // quad 1
-			5, 4, 6, 6, 7, 5, // quad 2
-			7, 6, 8, 8, 9, 7 // quad 3
-		};
-
-		const IndexBuffer box = { std::size( BoxI ), ig::VBufferUsage::StaticDraw, BoxI };
-		const IndexBuffer frame = { std::size( FrameI ), ig::VBufferUsage::StaticDraw, FrameI };
+		const IndexBuffer box = { std::size( BoxI ), ig::VBufferUsage::StaticDraw, BoxI.data() };
+		const IndexBuffer frame = { std::size( FrameI ), ig::VBufferUsage::StaticDraw, FrameI.data() };
 	} index_buffers;
+
+private:
+	inline void rect_draw_queued() {
+		m_box_build_index++;
+		if (m_box_build_index >= BoxPatchesCount)
+		{
+			dispatch_boxes();
+		}
+	}
+	inline void frame_draw_queued() {
+		m_frame_build_index++;
+		if (m_frame_build_index >= FramePatchesCount)
+		{
+			dispatch_frames();
+		}
+	}
+
 private:
 	StyleElement m_active_style_element = {};
 	bool m_dirty_color = true;
 	Renderer *m_renderer = nullptr;
+
+	size_t m_box_build_index = 0;
+	size_t m_frame_build_index = 0;
 };
+
+#pragma region(rendering factory defs)
+
+inline void
+Interface::RenderingFactory::build_rect( const Rectf &rect ) {
+	Vertex2 *const box_verts = box_vertices.get_vertices().data() + (m_box_build_index * PerBoxVertices);
+	box_verts[ 0 ].pos.x = rect.x;
+	box_verts[ 0 ].pos.y = rect.y;
+
+	box_verts[ 1 ].pos.x = rect.x + rect.w;
+	box_verts[ 1 ].pos.y = rect.y;
+
+	box_verts[ 2 ].pos.x = rect.x + rect.w;
+	box_verts[ 2 ].pos.y = rect.y + rect.h;
+
+	box_verts[ 3 ].pos.x = rect.x;
+	box_verts[ 3 ].pos.y = rect.y + rect.h;
+
+	if (m_dirty_color)
+	{
+		for (size_t i = 0; i < PerBoxVertices; i++)
+		{
+			box_verts[ i ].clr = m_active_style_element.color;
+		}
+	}
+
+	m_dirty_color = false;
+
+	rect_draw_queued();
+}
+
+inline void
+Interface::RenderingFactory::build_frame( const Rectf &outer, const Rectf &inner ) {
+	const Rectf::vector_type outer_end = outer.end();
+	const Rectf::vector_type inner_end = inner.end();
+	Vertex2 *const frame_verts = frame_vertices.get_vertices().data() + (m_frame_build_index * PerFrameVertices);
+
+	// quad 0
+	frame_verts[ 0 ].pos = { outer.x, outer.y };
+	frame_verts[ 1 ].pos = { inner.x, inner.y };
+	frame_verts[ 2 ].pos = { inner_end.x, inner.y };
+	frame_verts[ 3 ].pos = { outer_end.x, outer.y };
+
+	// quad 1
+	frame_verts[ 4 ].pos = inner_end;
+	frame_verts[ 5 ].pos = outer_end;
+
+	// quad 2
+	frame_verts[ 6 ].pos = { inner.x, inner_end.y };
+	frame_verts[ 7 ].pos = { outer.x, outer_end.y };
+
+	// quad 3
+	frame_verts[ 8 ].pos = frame_verts[ 1 ].pos;
+	frame_verts[ 9 ].pos = frame_verts[ 0 ].pos;
+
+	if (m_dirty_color)
+	{
+		for (size_t i = 0; i < PerFrameVertices; i++)
+		{
+			frame_verts[ i ].clr = m_active_style_element.color;
+		}
+	}
+
+	m_dirty_color = false;
+
+	frame_draw_queued();
+}
+
+inline void
+Interface::RenderingFactory::dispatch_boxes() {
+	box_vertices.update( 0, m_box_build_index * PerBoxVertices );
+	m_renderer->get_canvas().draw( box_vertices.get_buffer(), index_buffers.box );
+	m_box_build_index = 0;
+}
+
+inline void
+Interface::RenderingFactory::dispatch_frames() {
+	frame_vertices.update( 0, m_frame_build_index * PerFrameVertices );
+	m_renderer->get_canvas().draw( frame_vertices.get_buffer(), index_buffers.frame );
+	m_frame_build_index = 0;
+	
+}
+
+
+#pragma endregion
 
 class Interface::NodeTree
 {
@@ -469,6 +582,7 @@ public:
 
 	inline InputRecord() : m_tick{ 0 } {
 		m_values.resize( m_values.capacity );
+
 	}
 
 	inline void update() {
@@ -804,14 +918,13 @@ namespace igui
 				{
 					m_drawing_sc->apply_style_element( style_image.panel.background.value() );
 
-					m_drawing_sc->gen_box( node_global_pos.x, node_global_pos.y, node_global_rect.w, node_global_rect.h );
-					m_drawing_sc->draw_box();
+					m_drawing_sc->build_rect( node_global_rect );
 
 					const auto boarder = style_image.panel.boarder.value();
 
 					m_drawing_sc->apply_style_element( boarder.style );
 
-					m_drawing_sc->gen_frame(
+					m_drawing_sc->build_frame(
 						{
 							node_global_pos.x - boarder.left,
 							node_global_pos.y - boarder.top,
@@ -819,15 +932,13 @@ namespace igui
 							node_global_rect.h + boarder.top + boarder.bottom
 						},
 						node_global_rect );
-					m_drawing_sc->draw_frame();
 				}
 				break;
 			case NodeType::Button:
 				{
 					m_drawing_sc->apply_style_element( style_image.button.background.value() );
 
-					m_drawing_sc->gen_box( node_global_pos.x, node_global_pos.y, node_global_rect.w, node_global_rect.h );
-					m_drawing_sc->draw_box();
+					m_drawing_sc->build_rect( node_global_rect );
 
 					const InterfaceStyle::Boarder &boarder = std::invoke(
 						[ &style_image, mb_state ]() {
@@ -847,7 +958,7 @@ namespace igui
 
 					m_drawing_sc->apply_style_element( boarder.style );
 
-					m_drawing_sc->gen_frame(
+					m_drawing_sc->build_frame(
 						{
 							node_global_pos.x - boarder.left,
 							node_global_pos.y - boarder.top,
@@ -855,7 +966,6 @@ namespace igui
 							node_global_rect.h + boarder.top + boarder.bottom
 						},
 						node_global_rect );
-					m_drawing_sc->draw_frame();
 				}
 
 				break;
@@ -871,6 +981,8 @@ namespace igui
 		renderer->set_depth_test_comparison( old_dtc );
 		if (!was_depthtest_enabled)
 			renderer->disable_feature( ig::Feature::DepthTest );
+
+		m_drawing_sc->finish();
 	}
 
 	void Interface::input( InputEvent event ) {
@@ -1189,4 +1301,5 @@ namespace igui
 
 
 }
+
 
