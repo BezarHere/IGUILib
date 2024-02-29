@@ -19,6 +19,11 @@
 
 namespace igui
 {
+	// FIXME: literals will break if 'string' requires a wide string
+	using string = std::string;
+	template <typename _T>
+	using vector = std::vector<_T>;
+
 	// for extensibility, use own type names
 
 	typedef uint8_t u8;
@@ -47,14 +52,12 @@ namespace igui
 
 	using Texture = ig::Texture;
 	using Font = ig::Font;
+	using Text = ig::BaseTextTemplate<ig::Vertex2Buffer, string>;
 
 	using Window = ig::Window;
 	using Renderer = ig::Renderer;
 
-	// FIXME: literals will break if 'string' requires a wide string
-	using string = std::string;
-	template <typename _T>
-	using vector = std::vector<_T>;
+	
 
 	struct InputEvent
 	{
@@ -148,6 +151,18 @@ namespace igui
 		Centered
 	};
 
+	enum class SignalType
+	{
+		Changed,
+		ChangedValue,
+		Pressed,
+		Released,
+		Toggled,
+		MouseEntered,
+		MouseExited,
+		
+	};
+
 	struct Boxf
 	{
 		inline Boxf()
@@ -229,7 +244,7 @@ namespace igui
 			}
 
 			Color color;
-			const Font *font;
+			const Font *font = nullptr;
 		};
 
 		struct Shadow
@@ -380,7 +395,7 @@ namespace igui
 		/// @param new_index the new between the siblings, clamped down if it's out of bounds
 		void move_child( index_t child, index_t new_index );
 
-		/// @brief moves the child to a diffren parent, or makes the child a root node
+		/// @brief moves the child to a different parent, or makes the child a root node
 		/// @brief if the parent index is `npos`
 		/// @param parent the new parent's index, pass `npos` to make the a child a root node
 		void reparent_child( index_t child, index_t parent );
@@ -421,21 +436,24 @@ namespace igui
 
 	private:
 		class NodeTree;
-		class InputRecord;
 		class StyleData;
+		class InputManger;
 		class RenderingFactory;
-
 
 		size_t m_ticks;
 		nodes_collection m_nodes;
 		nodes_indices m_roots;
+
+		uint64_t m_hover_time;
+		index_t m_hover_node;
+
 		std::unique_ptr<NodeTree> m_tree;
 		std::unique_ptr<StyleData> m_style_data;
-		std::unique_ptr<InputRecord> m_input;
+		std::unique_ptr<InputManger> m_input;
 		std::unique_ptr<RenderingFactory> m_drawing_sc;
 	};
 
-	typedef void(*NodeSignalProc)(Node *node, uintptr_t action);
+	typedef void(*NodeSignalProc)(Node &node, SignalType type);
 	class Node
 	{
 		friend Interface;
@@ -462,7 +480,7 @@ namespace igui
 		void enable();
 		void hide();
 		void show();
-		void set_visibilty( bool visible );
+		void set_visibility( bool visible );
 		void set_position( Vec2f pos );
 		void set_size( Vec2f size );
 		void set_rect( Vec2f pos, Vec2f size );
@@ -472,6 +490,11 @@ namespace igui
 		void set_mouse_filter( MouseFilter filter );
 		void set_pivot( Vec2f pivot );
 		void set_angle( float angle );
+		void set_text( const string &str );
+		void set_tooltip( const string &str );
+		inline void set_signal_proc( const NodeSignalProc proc ) noexcept {
+			m_signal_proc = proc;
+		}
 
 		inline Vec2f get_position() const noexcept {
 			return { m_rect.x, m_rect.y };
@@ -501,11 +524,6 @@ namespace igui
 			return m_index;
 		}
 
-
-		inline void set_signal_proc( const NodeSignalProc proc ) noexcept {
-			m_signal_proc = proc;
-		}
-
 		inline NodeSignalProc get_signal_proc() const noexcept {
 			return m_signal_proc;
 		}
@@ -524,6 +542,14 @@ namespace igui
 
 		inline bool is_visible() const noexcept {
 			return m_state & StateMask_Visible;
+		}
+
+		inline const string &get_text() const noexcept {
+			return m_text;
+		}
+
+		inline const string &get_tooltip() const noexcept {
+			return m_tooltip;
 		}
 
 	private:
@@ -551,8 +577,8 @@ namespace igui
 		CursorShape m_cursor_shape = CursorShape::Arrow;
 		MouseButton m_trigger_button = MouseButton::Left;
 
-		string m_text = "Sample text";
-		string m_tooltip = "Sample tooltip"; // <- empty tooltip will not be displayed
+		string m_text = "";
+		string m_tooltip = ""; // <- empty tooltip will not be displayed
 		string m_desc;
 
 		i16 m_text_align = 0;

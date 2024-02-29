@@ -12,6 +12,8 @@ template <size_t _SZ>
 using Vertex2Array = ig::BaseVertexArray<ig::Vertex2, stacklist<ig::Vertex2, _SZ>>;
 using Vertex2 = ig::Vertex2;
 using IndexBuffer = ig::Index8Buffer;
+using ig::BufferUsage;
+using ig::PrimitiveType;
 #endif
 
 enum class InputActionState
@@ -171,7 +173,7 @@ template <size_t _SZ, size_t _REPC>
 static constexpr std::array<IndexBuffer::element_type, _REPC *_SZ>
 indexbuffer_pattern( const std::array<IndexBuffer::element_type, _SZ> &arr, const size_t shape_vert_count ) {
 	static_assert(_REPC > 0, "can't repeat zero times!");
-	std::array<IndexBuffer::element_type, _REPC *_SZ> result;
+	std::array<IndexBuffer::element_type, _REPC *_SZ> result{};
 
 	// copy pattern _REPC times
 	for (size_t i = 0; i < _REPC; i++)
@@ -191,6 +193,7 @@ class Interface::RenderingFactory
 public:
 	static constexpr size_t PerBoxVertices = 4;
 	static constexpr size_t PerFrameVertices = 10;
+	static constexpr size_t PerTextVertices = 4;
 
 	static constexpr size_t IndexMaxValue = (1ull << (sizeof( IndexBuffer::element_type ) * 8)) - 1;
 
@@ -206,12 +209,58 @@ public:
 	static constexpr size_t TotalBoxVertices = PerBoxVertices * BoxPatchesCount;
 	static constexpr size_t TotalFrameVertices = PerFrameVertices * FramePatchesCount;
 
+
+	static constexpr size_t TextBufferSzInBytes = 1ULL << 14;
+
+	static constexpr size_t TextBufferSzInGlyphs = TextBufferSzInBytes / (sizeof( Vertex2 ) * 4);
+
+	using TextVertexArray = Vertex2Array<TextBufferSzInGlyphs *Text::VerticesPerGlyph>;
+	static constexpr size_t TextBufferVerticesCount = TextVertexArray::container_type::capacity;
+
+	const struct RFIndexBuffers {
+
+		static constexpr size_t IndicesPerBox = 6;
+		static constexpr size_t IndicesPerFrame = IndicesPerBox * 4;
+		static constexpr size_t IndicesPerGlyph = IndicesPerBox;
+
+		using BulkBoxIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerBox *BoxPatchesCount>;
+		using BoxIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerBox>;
+
+		using BulkFrameIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerFrame *FramePatchesCount>;
+		using FrameIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerFrame>;
+
+		using BulkTextIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerGlyph *TextBufferSzInGlyphs>;
+		using TextIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerGlyph>;
+
+		static constexpr BulkBoxIndexBufferArray BoxI =
+			indexbuffer_pattern<IndicesPerBox, BoxPatchesCount>( BoxIndexBufferArray{ 0, 1, 2, 2, 3, 0 }, 4 );
+
+
+		static constexpr BulkFrameIndexBufferArray FrameI =
+			indexbuffer_pattern<IndicesPerFrame, FramePatchesCount>(
+				FrameIndexBufferArray{
+					0, 1, 2, 2, 3, 0, // quad 0
+					3, 2, 4, 4, 5, 3, // quad 1
+					5, 4, 6, 6, 7, 5, // quad 2
+					7, 6, 8, 8, 9, 7 // quad 3
+				}, IndicesPerBox + 2 * 2 );
+
+
+		static constexpr BulkTextIndexBufferArray TextI =
+			indexbuffer_pattern<IndicesPerGlyph, TextBufferSzInGlyphs>( TextIndexBufferArray{ 0, 1, 2, 2, 3, 0 }, 4 );
+
+		const IndexBuffer box = { std::size( BoxI ), ig::VBufferUsage::StaticDraw, BoxI.data() };
+		const IndexBuffer frame = { std::size( FrameI ), ig::VBufferUsage::StaticDraw, FrameI.data() };
+		const IndexBuffer text = { std::size( TextI ), ig::VBufferUsage::StaticDraw, TextI.data() };
+	};
+
 	RenderingFactory() {
 
 	}
 
 	inline void dispatch_boxes();
 	inline void dispatch_frames();
+	inline void dispatch_text();
 
 	inline void start( Renderer *const r ) {
 		m_renderer = r;
@@ -228,6 +277,13 @@ public:
 		{
 			dispatch_frames();
 		}
+
+
+
+		if (m_text_build_index)
+		{
+			dispatch_text();
+		}
 	}
 
 
@@ -238,10 +294,14 @@ public:
 		if (m_frame_build_index)
 			dispatch_frames();
 
+		if (m_text_build_index)
+			dispatch_text();
+
 	}
 
 	inline void build_rect( const Rectf &rect );
 	inline void build_frame( const Rectf &outer, const Rectf &inner );
+	inline void build_text( const string &text, const Vec2f &pos, const Color &clr );
 
 	inline void apply_style_element( const StyleElement &element ) {
 		if (element.color != m_active_style_element.color)
@@ -257,36 +317,24 @@ public:
 		}
 	}
 
+	inline void set_font( const Font *font ) {
+		if (font == nullptr)
+			font = &DefaultFont;
+
+		if (font == m_font)
+			return;
+		dispatch_text();
+		font = m_font;
+	}
+
+	const Font DefaultFont = Font::get_default();
+
 	Vertex2Array<TotalBoxVertices> box_vertices{ ig::PrimitiveType::Triangle, TotalBoxVertices, ig::BufferUsage::Stream }; // quad
 	Vertex2Array<TotalFrameVertices> frame_vertices{ ig::PrimitiveType::Triangle, TotalFrameVertices, ig::BufferUsage::Stream }; // quad strip
+	TextVertexArray text_vertices{ ig::PrimitiveType::Triangle, TextVertexArray::container_type::capacity, ig::BufferUsage::Stream };
+	Vec2f text_scale = { 1.f, 1.f };
 
-	const struct RFIndexBuffers {
-
-		static constexpr size_t IndicesPerBox = 6;
-		static constexpr size_t IndicesPerFrame = IndicesPerBox * 4;
-
-		using BulkBoxIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerBox *BoxPatchesCount>;
-		using BoxIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerBox>;
-
-		using BulkFrameIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerFrame *FramePatchesCount>;
-		using FrameIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerFrame>;
-
-		static constexpr BulkBoxIndexBufferArray BoxI =
-			indexbuffer_pattern<IndicesPerBox, BoxPatchesCount>( BoxIndexBufferArray{ 0, 1, 2, 2, 3, 0 }, 4 );
-
-
-		static constexpr BulkFrameIndexBufferArray FrameI =
-			indexbuffer_pattern<IndicesPerFrame, FramePatchesCount>(
-				FrameIndexBufferArray{
-					0, 1, 2, 2, 3, 0, // quad 0
-					3, 2, 4, 4, 5, 3, // quad 1
-					5, 4, 6, 6, 7, 5, // quad 2
-					7, 6, 8, 8, 9, 7 // quad 3
-				}, IndicesPerBox + 2 * 2 );
-
-		const IndexBuffer box = { std::size( BoxI ), ig::VBufferUsage::StaticDraw, BoxI.data() };
-		const IndexBuffer frame = { std::size( FrameI ), ig::VBufferUsage::StaticDraw, FrameI.data() };
-	} index_buffers;
+	RFIndexBuffers index_buffers;
 
 private:
 	inline void rect_draw_queued() {
@@ -303,6 +351,13 @@ private:
 			dispatch_frames();
 		}
 	}
+	inline void text_draw_queued( const size_t glyphs_count ) {
+		m_text_build_index += glyphs_count;
+		if (m_text_build_index >= FramePatchesCount)
+		{
+			dispatch_text();
+		}
+	}
 
 private:
 	StyleElement m_active_style_element = {};
@@ -311,6 +366,9 @@ private:
 
 	size_t m_box_build_index = 0;
 	size_t m_frame_build_index = 0;
+	size_t m_text_build_index = 0;
+
+	const Font *m_font = &DefaultFont;
 };
 
 #pragma region(rendering factory defs)
@@ -380,6 +438,35 @@ Interface::RenderingFactory::build_frame( const Rectf &outer, const Rectf &inner
 	frame_draw_queued();
 }
 
+inline void Interface::RenderingFactory::build_text( const string &text, const Vec2f &pos, const Color &clr ) {
+	// the cached text buffer maynot suffice...
+	if (text_vertices.get_vertices().capacity - m_text_build_index < text.length())
+	{
+		dispatch_text();
+		if (text.length() > TextBufferSzInGlyphs)
+		{
+			std::cerr << "\nIGUI: DISPLAING STRING LARGER THEN " << TextBufferSzInGlyphs << " IS CURRENTLY NOT SUPPORTED\n";
+			return;
+		}
+
+	}
+
+
+	Vertex2 *const vertices = text_vertices.get_vertices().data();
+	Text::IndexedMeshBuilder imb{ vertices + m_text_build_index, text_vertices.get_vertices().capacity - m_text_build_index };
+	const size_t len = Text::build(
+		imb, text, *m_font, text_scale, 4.f
+	);
+
+	for (size_t i = 0; i < len; i++)
+	{
+		vertices[ i + m_text_build_index ].pos += pos;
+		vertices[ i + m_text_build_index ].clr = clr;
+	}
+
+	text_draw_queued( len );
+}
+
 inline void
 Interface::RenderingFactory::dispatch_boxes() {
 	box_vertices.update( 0, m_box_build_index * PerBoxVertices );
@@ -395,6 +482,22 @@ Interface::RenderingFactory::dispatch_frames() {
 
 }
 
+inline void
+Interface::RenderingFactory::dispatch_text() {
+	text_vertices.update( 0, m_text_build_index * PerTextVertices );
+
+	m_renderer->bind_texture( m_font->get_atlas() );
+	m_renderer->bind_shader( Font::get_shader() );
+	m_renderer->try_update_shader_state();
+
+	m_renderer->get_canvas().draw( text_vertices.get_buffer(), index_buffers.text );
+
+	m_renderer->try_update_shader_state();
+	m_renderer->bind_texture( 0 );
+	m_renderer->bind_default_shader( ig::ShaderUsage::Usage2D );
+
+	m_text_build_index = 0;
+}
 
 #pragma endregion
 
@@ -566,7 +669,7 @@ private:
 	vector<NodeEntry> m_entries = {};
 };
 
-class Interface::InputRecord
+class Interface::InputManger
 {
 public:
 	static constexpr size_t RecordSize = 512;
@@ -586,7 +689,7 @@ public:
 		bool handled = false;
 	};
 
-	inline InputRecord() : m_tick{ 0 } {
+	inline InputManger() : m_tick{ 0 } {
 		m_values.resize( m_values.capacity );
 
 	}
@@ -774,7 +877,7 @@ namespace igui
 	Interface::Interface()
 		: m_ticks{ 0 },
 		m_drawing_sc{ new RenderingFactory() },
-		m_input{ new InputRecord() },
+		m_input{ new InputManger() },
 		m_style_data{ new StyleData() },
 		m_tree{ new NodeTree() } {
 
@@ -826,25 +929,26 @@ namespace igui
 
 	void Interface::draw( Renderer *renderer ) const {
 		using ParentNodeConnection = NodeTree::ParentNodeConnection;
+
 		static const ParentNodeConnection DefaultCPNC = { 0 };
 		static ParentNodeConnection DefaultPNC = { 0 };
+		const Font DefaultFont = Font::get_default();
 
-		if (m_tree->is_dirty())
-		{
-			// draw is const, can't just call rebuild
-			m_tree->regenerate( m_roots, m_nodes );
-		}
+
+		//if (m_tree->is_dirty())
+		//{
+		//	rebuild();
+		//}
 
 		m_drawing_sc->start( renderer );
 
 		m_input->raw_mouse_pos = Vec2f( renderer->get_window().get_mouse_position() );
 
-		// i fucked the how the transforms are applied that applying 
-		// the transform on the gpu is the inverted (or the reverse)
-		// so this is the 'inverted transform' for now...
-		const Trnsf inverted_transform = renderer->get_canvas().transform2d();
 
-		m_input->mouse_pos = inverted_transform * m_input->raw_mouse_pos;
+		const Trnsf inverted_transform = renderer->get_canvas().transform2d().inverse();
+		// FIXME: rotating transforms will make this fucked
+		m_input->mouse_pos = inverted_transform * (m_input->raw_mouse_pos);
+
 
 		renderer->get_canvas().circle( 8.f, m_input->mouse_pos, { 0.25f, 0.5f, 0.75f }, 8 );
 		renderer->get_canvas().circle( 4.f, m_input->raw_mouse_pos, { 0.75f, 0.5f, 0.25f }, 8 );
@@ -853,14 +957,6 @@ namespace igui
 
 		MouseCapturedState mouse_captured = MouseCapturedState::Free;
 		index_t last_node = npos;
-
-		/*
-		FIXME: draw order is fine but update order is not workable
-
-		updating/capturing inputs should be reverse order of drawing (children -> parents)
-		drawing should be for children last to render them on top of parent (parents -> children)
-		or reverse the depth test or some shit, just fix this mess
-		*/
 
 		m_tree->update( m_nodes );
 
@@ -877,7 +973,6 @@ namespace igui
 
 			const Vec2f node_global_pos = { con.position.x + node.m_rect.x, con.position.y + node.m_rect.y };
 			const Rectf node_global_rect = { node_global_pos.x, node_global_pos.y, node.m_rect.w, node.m_rect.h };
-
 
 			const bool mouse_available =
 				node.m_mouse_filter != MouseFilter::Ignore &&
@@ -911,7 +1006,7 @@ namespace igui
 				node.m_state |= StateMask_Hovered;
 			}
 
-			// can be but in if (hovered) but nesting is yucky
+			// can be in if (hovered) but nesting is yucky
 			if (mb_state == InputActionState::Actived)
 			{
 				node.m_state |= StateMask_Pressed;
@@ -942,7 +1037,18 @@ namespace igui
 				break;
 			case NodeType::Button:
 				{
-					m_drawing_sc->apply_style_element( style_image.button.background.value() );
+					if (mb_state == InputActionState::Actived)
+					{
+						m_drawing_sc->apply_style_element( style_image.button.activated.value() );
+					}
+					else if (mb_state == InputActionState::Hovered)
+					{
+						m_drawing_sc->apply_style_element( style_image.button.hovered.value() );
+					}
+					else
+					{
+						m_drawing_sc->apply_style_element( style_image.button.background.value() );
+					}
 
 					m_drawing_sc->build_rect( node_global_rect );
 
@@ -979,7 +1085,10 @@ namespace igui
 				break;
 			}
 
-			// loop tail:
+			if (!node.m_text.empty())
+			{
+				m_drawing_sc->build_text( node.m_text, node_global_pos, ig::ColorfTable::White );
+			}
 
 			last_node = entry.node_index;
 		}
@@ -1237,7 +1346,7 @@ namespace igui
 		m_state |= StateMask_Visible;
 	}
 
-	void Node::set_visibilty( bool visible ) {
+	void Node::set_visibility( bool visible ) {
 		if (visible)
 		{
 			show();
@@ -1281,8 +1390,8 @@ namespace igui
 			m_rect_dirty = true;
 	}
 
-	void Node::set_anchors( const Boxf &anchros ) {
-		m_anchors = anchros;
+	void Node::set_anchors( const Boxf &anchors ) {
+		m_anchors = anchors;
 	}
 
 	void Node::set_anchors( float left, float right, float top, float bottom ) {
@@ -1304,7 +1413,13 @@ namespace igui
 		m_angle = angle;
 	}
 
+	void Node::set_text( const string &text ) {
+		m_text = text;
+	}
 
+	void Node::set_tooltip( const string &text ) {
+		m_tooltip = text;
+	}
 
 }
 
