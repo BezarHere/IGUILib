@@ -46,6 +46,7 @@ namespace igui
 	using Trnsf = ig::Transform2D;
 	using Vec2f = ig::Vector2f;
 	using Vec2i = ig::Vector2i;
+	using Vec2s = ig::Vector2s;
 	using Rectf = ig::Rect2f;
 	using Recti = ig::Rect2i;
 	using Color = ig::Colorf;
@@ -57,7 +58,7 @@ namespace igui
 	using Window = ig::Window;
 	using Renderer = ig::Renderer;
 
-	
+
 
 	struct InputEvent
 	{
@@ -160,7 +161,7 @@ namespace igui
 		Toggled,
 		MouseEntered,
 		MouseExited,
-		
+
 	};
 
 	struct Boxf
@@ -453,7 +454,7 @@ namespace igui
 		std::unique_ptr<RenderingFactory> m_drawing_sc;
 	};
 
-	typedef void(*NodeSignalProc)(Node &node, SignalType type);
+	typedef void(*NodeSignalProc)(const Node &node, SignalType type);
 	class Node
 	{
 		friend Interface;
@@ -553,6 +554,12 @@ namespace igui
 		}
 
 	private:
+		inline void trigger( const SignalType type ) const {
+			if (m_signal_proc)
+				m_signal_proc( *this, type );
+		}
+
+	private:
 		NodeType m_type;
 		index_t m_index;
 
@@ -579,7 +586,7 @@ namespace igui
 
 		string m_text = "";
 		string m_tooltip = ""; // <- empty tooltip will not be displayed
-		string m_desc;
+		string m_description;
 
 		i16 m_text_align = 0;
 

@@ -11,9 +11,11 @@ using namespace igui;
 template <size_t _SZ>
 using Vertex2Array = ig::BaseVertexArray<ig::Vertex2, stacklist<ig::Vertex2, _SZ>>;
 using Vertex2 = ig::Vertex2;
-using IndexBuffer = ig::Index8Buffer;
+using LongIndexBuffer = ig::Index16Buffer;
+using ShortIndexBuffer = ig::Index8Buffer;
 using ig::BufferUsage;
 using ig::PrimitiveType;
+using std::array;
 #endif
 
 enum class InputActionState
@@ -150,10 +152,20 @@ enum NoneHierarchyNodeFlags : uint16_t
 
 };
 
+typedef uint16_t zindex_t;
+
+struct ZIndexedVertex2
+{
+	Vec2f pos;
+	Color clr;
+	Vec2f uv;
+	zindex_t zindex;
+};
 
 template <typename _T, size_t _SZ, size_t _REPC>
 static constexpr std::array<_T, _REPC *_SZ> repeat_pattern( const std::array<_T, _SZ> &arr ) {
 	static_assert(_REPC > 0, "can't repeat zero times!");
+
 	std::array<_T, _REPC *_SZ> result;
 
 	// copy pattern _REPC times
@@ -170,10 +182,16 @@ static constexpr std::array<_T, _REPC *_SZ> repeat_pattern( const std::array<_T,
 }
 
 template <size_t _SZ, size_t _REPC>
-static constexpr std::array<IndexBuffer::element_type, _REPC *_SZ>
-indexbuffer_pattern( const std::array<IndexBuffer::element_type, _SZ> &arr, const size_t shape_vert_count ) {
+static constexpr std::array<LongIndexBuffer::element_type, _REPC *_SZ>
+indexbuffer_pattern( const std::array<LongIndexBuffer::element_type, _SZ> &arr, const size_t shape_vert_count ) {
 	static_assert(_REPC > 0, "can't repeat zero times!");
-	std::array<IndexBuffer::element_type, _REPC *_SZ> result{};
+	std::array<LongIndexBuffer::element_type, _REPC *_SZ> result{};
+
+	if (shape_vert_count * (_REPC - 1) > (size_t)std::numeric_limits<LongIndexBuffer::element_type>::max())
+	{
+		//! OVERFLOW RISK
+		return result;
+	}
 
 	// copy pattern _REPC times
 	for (size_t i = 0; i < _REPC; i++)
@@ -181,24 +199,73 @@ indexbuffer_pattern( const std::array<IndexBuffer::element_type, _SZ> &arr, cons
 		// copy pattern
 		for (size_t j = 0; j < _SZ; j++)
 		{
-			result[ i * _SZ + j ] = arr[ j ] + static_cast<IndexBuffer::element_type>(i * shape_vert_count);
+			result[ i * _SZ + j ] = arr[ j ] + static_cast<LongIndexBuffer::element_type>(i * shape_vert_count);
 		}
 	}
 
 	return result;
 }
 
+struct ZIndexedTextMeshBuilder
+{
+	static constexpr bool Indexed = true;
+	using vertex_type = ZIndexedVertex2;
+
+	inline ZIndexedTextMeshBuilder( vertex_type *vertices, const size_t p_count, const zindex_t p_zindex, const Vec2f &p_pos, const Color &p_clr )
+		: m_vertices{ vertices }, count{ p_count }, zindex{ p_zindex }, pos{ p_pos }, clr{ p_clr } {
+
+	}
+
+	inline void operator()( size_t index, float pos_x, float pos_y, const Vec2f glyph_size, const Font::UVBox &uv_box ) {
+		pos_x += pos.x;
+		pos_y += pos.y;
+
+		m_vertices[ index + 0 ].pos = { pos_x + glyph_size.x, pos_y + glyph_size.y };
+		m_vertices[ index + 0 ].uv = uv_box.origin + uv_box.left + uv_box.bottom;
+		m_vertices[ index + 0 ].clr = clr;
+		m_vertices[ index + 0 ].zindex = zindex;
+
+		m_vertices[ index + 1 ].pos = { pos_x, pos_y + glyph_size.y };
+		m_vertices[ index + 1 ].uv = (uv_box.origin + uv_box.left);
+		m_vertices[ index + 1 ].clr = clr;
+		m_vertices[ index + 1 ].zindex = zindex;
+
+		m_vertices[ index + 2 ].pos = { pos_x, pos_y };
+		m_vertices[ index + 2 ].uv = uv_box.origin;
+		m_vertices[ index + 2 ].clr = clr;
+		m_vertices[ index + 2 ].zindex = zindex;
+
+		m_vertices[ index + 3 ].pos = { pos_x + glyph_size.x, pos_y };
+		m_vertices[ index + 3 ].uv = (uv_box.origin + uv_box.bottom);
+		m_vertices[ index + 3 ].clr = clr;
+		m_vertices[ index + 3 ].zindex = zindex;
+	}
+
+	const size_t count;
+	const Vec2f pos;
+	const Color clr;
+	const zindex_t zindex;
+private:
+	vertex_type *m_vertices;
+};
+
 class Interface::RenderingFactory
 {
 public:
+	static constexpr zindex_t start_zindex = 0xfffe;
+
 	static constexpr size_t PerBoxVertices = 4;
 	static constexpr size_t PerFrameVertices = 10;
-	static constexpr size_t PerTextVertices = 4;
+	static constexpr size_t PerGlyphVertices = 4;
 
-	static constexpr size_t IndexMaxValue = (1ull << (sizeof( IndexBuffer::element_type ) * 8)) - 1;
+	static constexpr size_t IndicesPerBox = 6;
+	static constexpr size_t IndicesPerFrame = IndicesPerBox * 4;
+	static constexpr size_t IndicesPerGlyph = IndicesPerBox;
 
-	static constexpr size_t RectPatchesMaxCount = 0x100;
-	static constexpr size_t FramePatchesMaxCount = 0x100;
+	static constexpr size_t IndexMaxValue = (1ull << (sizeof( LongIndexBuffer::element_type ) * 8)) - 1;
+
+	static constexpr size_t RectPatchesMaxCount = 512;
+	static constexpr size_t FramePatchesMaxCount = 2048;
 
 	static constexpr size_t BoxPatchesCount =
 		std::min<size_t>( (IndexMaxValue + 1) / PerBoxVertices, RectPatchesMaxCount );
@@ -210,27 +277,41 @@ public:
 	static constexpr size_t TotalFrameVertices = PerFrameVertices * FramePatchesCount;
 
 
-	static constexpr size_t TextBufferSzInBytes = 1ULL << 14;
-
-	static constexpr size_t TextBufferSzInGlyphs = TextBufferSzInBytes / (sizeof( Vertex2 ) * 4);
+	static constexpr size_t TextBufferVerticesCount =
+		std::min<size_t>( 4096ULL, std::numeric_limits<LongIndexBuffer::element_type>::max() / IndicesPerGlyph );
+	static constexpr size_t TextBufferSzInGlyphs = TextBufferVerticesCount / PerGlyphVertices;
 
 	using TextVertexArray = Vertex2Array<TextBufferSzInGlyphs *Text::VerticesPerGlyph>;
-	static constexpr size_t TextBufferVerticesCount = TextVertexArray::container_type::capacity;
+
+	static inline const char *get_zindexed_vertex_shader_src() {
+		static std::string test = "";
+		if (test.empty())
+		{
+			std::ostringstream ss{};
+			ss << "#version 330\n";
+			ss << "layout ( location = 0 ) in vec2 a_pos;";
+			ss << "layout ( location = 1 ) in vec4 a_clr;";
+			ss << "layout ( location = 2 ) in vec2 a_texcoord;";
+			ss << "layout ( location = 3 ) in float a_zindex;";
+			ss << ig::Shader::get_default_source_part( ig::ShaderUsage::Usage2D, ig::ShaderSourcePart::VertexOutputs );
+			ss << ig::Shader::get_default_source_part( ig::ShaderUsage::Usage2D, ig::ShaderSourcePart::VertexUniforms );
+			ss << ig::Shader::get_default_source_part( ig::ShaderUsage::Usage2D, ig::ShaderSourcePart::VertexUtilityMethods );
+			ss << "void main() {vec2 tpos = (_trans * a_pos) + _offset;gl_Position = vec4(to_native_space(tpos), a_zindex, 1.0);FragColor = a_clr;UV = a_texcoord;}";
+			test = ss.str();
+		}
+		return test.c_str();
+	}
 
 	const struct RFIndexBuffers {
 
-		static constexpr size_t IndicesPerBox = 6;
-		static constexpr size_t IndicesPerFrame = IndicesPerBox * 4;
-		static constexpr size_t IndicesPerGlyph = IndicesPerBox;
+		using BulkBoxIndexBufferArray = std::array<LongIndexBuffer::element_type, IndicesPerBox *BoxPatchesCount>;
+		using BoxIndexBufferArray = std::array<LongIndexBuffer::element_type, IndicesPerBox>;
 
-		using BulkBoxIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerBox *BoxPatchesCount>;
-		using BoxIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerBox>;
+		using BulkFrameIndexBufferArray = std::array<LongIndexBuffer::element_type, IndicesPerFrame *FramePatchesCount>;
+		using FrameIndexBufferArray = std::array<LongIndexBuffer::element_type, IndicesPerFrame>;
 
-		using BulkFrameIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerFrame *FramePatchesCount>;
-		using FrameIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerFrame>;
-
-		using BulkTextIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerGlyph *TextBufferSzInGlyphs>;
-		using TextIndexBufferArray = std::array<IndexBuffer::element_type, IndicesPerGlyph>;
+		using BulkTextIndexBufferArray = std::array<LongIndexBuffer::element_type, IndicesPerGlyph *TextBufferSzInGlyphs>;
+		using TextIndexBufferArray = std::array<LongIndexBuffer::element_type, IndicesPerGlyph>;
 
 		static constexpr BulkBoxIndexBufferArray BoxI =
 			indexbuffer_pattern<IndicesPerBox, BoxPatchesCount>( BoxIndexBufferArray{ 0, 1, 2, 2, 3, 0 }, 4 );
@@ -249,13 +330,25 @@ public:
 		static constexpr BulkTextIndexBufferArray TextI =
 			indexbuffer_pattern<IndicesPerGlyph, TextBufferSzInGlyphs>( TextIndexBufferArray{ 0, 1, 2, 2, 3, 0 }, 4 );
 
-		const IndexBuffer box = { std::size( BoxI ), ig::VBufferUsage::StaticDraw, BoxI.data() };
-		const IndexBuffer frame = { std::size( FrameI ), ig::VBufferUsage::StaticDraw, FrameI.data() };
-		const IndexBuffer text = { std::size( TextI ), ig::VBufferUsage::StaticDraw, TextI.data() };
+		const LongIndexBuffer box = { std::size( BoxI ), ig::VBufferUsage::StaticDraw, BoxI.data() };
+		const LongIndexBuffer frame = { std::size( FrameI ), ig::VBufferUsage::StaticDraw, FrameI.data() };
+		const LongIndexBuffer text = { std::size( TextI ), ig::VBufferUsage::StaticDraw, TextI.data() };
 	};
 
-	RenderingFactory() {
+	RenderingFactory()
+		: text_vbuffer{ TextBufferVerticesCount * sizeof( ZIndexedVertex2 ), ig::VBufferUsage::StreamDraw },
+		text_vpd{} {
+		m_shader.reset( ig::Shader::compile_raw( get_zindexed_vertex_shader_src(), nullptr, ig::ShaderUsage::Usage2D ).release() );
 
+		text_vpd.set_stride( sizeof( ZIndexedVertex2 ) );
+		{
+			auto interface = text_vpd.create_interface();
+			interface.attributes.push_back( { ig::VPDAttributeType::Float, ig::VPDAttributeSize::Vec2 } );
+			interface.attributes.push_back( { ig::VPDAttributeType::Float, ig::VPDAttributeSize::Color } );
+			interface.attributes.push_back( { ig::VPDAttributeType::Float, ig::VPDAttributeSize::Vec2 } );
+			interface.attributes.push_back( { ig::VPDAttributeType::NormalizedUnsignedShort, ig::VPDAttributeSize::Single } );
+		}
+		text_vbuffer.create( TextBufferVerticesCount * sizeof( ZIndexedVertex2 ), ig::VBufferUsage::StreamDraw );
 	}
 
 	inline void dispatch_boxes();
@@ -264,6 +357,9 @@ public:
 
 	inline void start( Renderer *const r ) {
 		m_renderer = r;
+		m_zindices.box = start_zindex;
+		m_zindices.frame = start_zindex;
+		m_zindices.text = start_zindex;
 
 		// finish should flush m_box_build_index
 		// flushing it sets it to zero
@@ -331,9 +427,12 @@ public:
 
 	Vertex2Array<TotalBoxVertices> box_vertices{ ig::PrimitiveType::Triangle, TotalBoxVertices, ig::BufferUsage::Stream }; // quad
 	Vertex2Array<TotalFrameVertices> frame_vertices{ ig::PrimitiveType::Triangle, TotalFrameVertices, ig::BufferUsage::Stream }; // quad strip
-	TextVertexArray text_vertices{ ig::PrimitiveType::Triangle, TextVertexArray::container_type::capacity, ig::BufferUsage::Stream };
-	Vec2f text_scale = { 1.f, 1.f };
 
+	ig::RawVertexBuffer text_vbuffer;
+	array<ZIndexedVertex2, TextBufferVerticesCount> text_vertices{};
+	ig::VertexPipelineDescriptor text_vpd;
+
+	Vec2f text_scale = { 1.f, 1.f };
 	RFIndexBuffers index_buffers;
 
 private:
@@ -343,6 +442,7 @@ private:
 		{
 			dispatch_boxes();
 		}
+		m_zindices.box--;
 	}
 	inline void frame_draw_queued() {
 		m_frame_build_index++;
@@ -350,13 +450,15 @@ private:
 		{
 			dispatch_frames();
 		}
+		m_zindices.frame--;
 	}
 	inline void text_draw_queued( const size_t glyphs_count ) {
 		m_text_build_index += glyphs_count;
-		if (m_text_build_index >= FramePatchesCount)
+		if (m_text_build_index >= TextBufferVerticesCount)
 		{
 			dispatch_text();
 		}
+		m_zindices.text--;
 	}
 
 private:
@@ -368,7 +470,13 @@ private:
 	size_t m_frame_build_index = 0;
 	size_t m_text_build_index = 0;
 
+	struct zindices
+	{
+		zindex_t box, frame, text;
+	} m_zindices;
+
 	const Font *m_font = &DefaultFont;
+	std::unique_ptr<ig::Shader> m_shader;
 };
 
 #pragma region(rendering factory defs)
@@ -439,11 +547,11 @@ Interface::RenderingFactory::build_frame( const Rectf &outer, const Rectf &inner
 }
 
 inline void Interface::RenderingFactory::build_text( const string &text, const Vec2f &pos, const Color &clr ) {
-	// the cached text buffer maynot suffice...
-	if (text_vertices.get_vertices().capacity - m_text_build_index < text.length())
+	// the cached text buffer may not suffice...
+	if (text_vertices.size() - m_text_build_index < text.length())
 	{
 		dispatch_text();
-		if (text.length() > TextBufferSzInGlyphs)
+		if (text.length() > 1)
 		{
 			std::cerr << "\nIGUI: DISPLAING STRING LARGER THEN " << TextBufferSzInGlyphs << " IS CURRENTLY NOT SUPPORTED\n";
 			return;
@@ -451,18 +559,10 @@ inline void Interface::RenderingFactory::build_text( const string &text, const V
 
 	}
 
-
-	Vertex2 *const vertices = text_vertices.get_vertices().data();
-	Text::IndexedMeshBuilder imb{ vertices + m_text_build_index, text_vertices.get_vertices().capacity - m_text_build_index };
+	ZIndexedTextMeshBuilder imb{ text_vertices.data() + m_text_build_index, text_vertices.size() - m_text_build_index, m_zindices.text, pos, clr };
 	const size_t len = Text::build(
 		imb, text, *m_font, text_scale, 4.f
 	);
-
-	for (size_t i = 0; i < len; i++)
-	{
-		vertices[ i + m_text_build_index ].pos += pos;
-		vertices[ i + m_text_build_index ].clr = clr;
-	}
 
 	text_draw_queued( len );
 }
@@ -484,17 +584,35 @@ Interface::RenderingFactory::dispatch_frames() {
 
 inline void
 Interface::RenderingFactory::dispatch_text() {
-	text_vertices.update( 0, m_text_build_index * PerTextVertices );
+	text_vbuffer.update_bytes( text_vertices.data(), 0, m_text_build_index * sizeof( ZIndexedVertex2 ) );
 
 	m_renderer->bind_texture( m_font->get_atlas() );
-	m_renderer->bind_shader( Font::get_shader() );
 	m_renderer->try_update_shader_state();
 
-	m_renderer->get_canvas().draw( text_vertices.get_buffer(), index_buffers.text );
+	const auto &p = RenderingFactory::RFIndexBuffers::BoxI;
+	const auto &p2 = RenderingFactory::RFIndexBuffers::TextI;
 
-	m_renderer->try_update_shader_state();
+	{
+		//m_renderer->bind_shader( m_shader.get() );
+		m_renderer->bind_shader( Font::get_shader().get() );
+		text_vpd.bind();
+		text_vbuffer.bind();
+		index_buffers.text.bind();
+
+		text_vpd.setup();
+
+		// i NEED to know why mul the m_text_build_index by 2 fixes the text rendering problem??
+		m_renderer->render( PrimitiveType::Triangle, m_text_build_index * 2, ig::VertexIndexType::Short, 0 );
+
+		text_vpd.clear_setup();
+
+		index_buffers.text.clear_bound();
+		text_vbuffer.clear_bound();
+		text_vpd.clear_bound();
+		m_renderer->bind_default_shader( ig::ShaderUsage::Usage2D );
+	}
+
 	m_renderer->bind_texture( 0 );
-	m_renderer->bind_default_shader( ig::ShaderUsage::Usage2D );
 
 	m_text_build_index = 0;
 }
@@ -544,7 +662,8 @@ public:
 		m_dirty = false;
 
 		vector<NodeEntry> nodes_to_calculate{};
-		for (index_t n : roots) nodes_to_calculate.emplace_back( n, npos );
+		for (int i = 0; i < roots.size(); i++)
+			nodes_to_calculate.emplace_back( roots[ roots.size() - 1 - i ], npos );
 
 		while (!nodes_to_calculate.empty())
 		{
@@ -665,7 +784,7 @@ public:
 private:
 	bool m_dirty = true;
 	vector<ParentNodeConnection> m_pncs = {};
-	// currently reversed but should it be iterated in reverse instead?
+	// currently iterated in reverse but should it be reversed instead?
 	vector<NodeEntry> m_entries = {};
 };
 
@@ -934,12 +1053,6 @@ namespace igui
 		static ParentNodeConnection DefaultPNC = { 0 };
 		const Font DefaultFont = Font::get_default();
 
-
-		//if (m_tree->is_dirty())
-		//{
-		//	rebuild();
-		//}
-
 		m_drawing_sc->start( renderer );
 
 		m_input->raw_mouse_pos = Vec2f( renderer->get_window().get_mouse_position() );
@@ -982,7 +1095,6 @@ namespace igui
 
 			if (hovered)
 			{
-				//std::cout << "mouse available: " << entry.node_index << '\n';
 				if (node.m_mouse_filter == MouseFilter::Stop)
 				{
 					mouse_captured = MouseCapturedState::Captured;
@@ -1000,6 +1112,7 @@ namespace igui
 			const InputActionState mb_state = hovered ?
 				(_ics == InputActionState::None ? InputActionState::Hovered : _ics) : InputActionState::None;
 
+			const auto old_state = node.m_state;
 			node.m_state &= ~(StateMask_Hovered | StateMask_Pressed);
 			if (hovered)
 			{
@@ -1010,6 +1123,15 @@ namespace igui
 			if (mb_state == InputActionState::Actived)
 			{
 				node.m_state |= StateMask_Pressed;
+			}
+
+			if (node.m_state & StateMask_Hovered && !(old_state & StateMask_Hovered))
+			{
+				node.trigger( SignalType::MouseEntered );
+			}
+			else if (!(node.m_state & StateMask_Hovered) && old_state & StateMask_Hovered)
+			{
+				node.trigger( SignalType::MouseExited );
 			}
 
 			// drawing the node
@@ -1037,13 +1159,22 @@ namespace igui
 				break;
 			case NodeType::Button:
 				{
+
 					if (mb_state == InputActionState::Actived)
 					{
 						m_drawing_sc->apply_style_element( style_image.button.activated.value() );
+						if (!(old_state & StateMask_Activated))
+						{
+							node.trigger( SignalType::Pressed );
+						}
 					}
 					else if (mb_state == InputActionState::Hovered)
 					{
 						m_drawing_sc->apply_style_element( style_image.button.hovered.value() );
+						if (old_state & StateMask_Activated)
+						{
+							node.trigger( SignalType::Released );
+						}
 					}
 					else
 					{
@@ -1093,11 +1224,12 @@ namespace igui
 			last_node = entry.node_index;
 		}
 
+		m_drawing_sc->finish();
+
 		renderer->set_depth_test_comparison( old_dtc );
 		if (!was_depthtest_enabled)
 			renderer->disable_feature( ig::Feature::DepthTest );
 
-		m_drawing_sc->finish();
 	}
 
 	void Interface::input( InputEvent event ) {

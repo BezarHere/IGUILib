@@ -1,12 +1,12 @@
 #ifndef PCH_H
 #define PCH_H
 
-#include <iostream>
-#include <vector>
-#include <string>
-#include <stack>
-#include <map>
 #include <algorithm>
+#include <iostream>
+#include <map>
+#include <stack>
+#include <string>
+#include <vector>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
